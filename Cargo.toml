@@ -1,0 +1,11 @@
+[package]
+name = "piespy-rs"
+version = "0.1.0"
+authors = ["Asher Baker <asherkin@limetech.io>"]
+edition = "2018"
+
+[dependencies]
+serenity = { version = "0.8.6", default-features = false, features = ["client", "gateway", "http", "model", "rustls_backend"] }
+lru = "0.5.3"
+petgraph = { version = "0.5.1", default-features = false, features = ["serde-1", "graphmap"] }
+env_logger = "0.7.1"
