@@ -3,10 +3,19 @@ use serenity::client::Client;
 use std::env;
 
 mod bot;
+mod cache;
 mod inference;
 
 fn main() {
+    // RUST_LOG = reqwest=debug,tungstenite::protocol=trace/^(Received|response)
     env_logger::init();
+
+    // Permissions to request: 85056
+    // * View Channels
+    // * Send Messages
+    // * Embed Links
+    // * Read Message History
+    // * Add Reactions
 
     // Login with a bot token from the environment
     let mut client = Client::new_with_extras(&env::var("DISCORD_TOKEN").expect("token"), |f| {

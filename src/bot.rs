@@ -1,43 +1,46 @@
-use lru::LruCache;
-use serenity::model::channel::{Message, Reaction};
-use serenity::model::id::{ChannelId, MessageId, UserId};
-use serenity::prelude::{Context, EventHandler};
+use serenity::model::prelude::*;
+use serenity::prelude::{Context, EventHandler, RwLock};
 
+use std::sync::Arc;
+
+use crate::cache::Cache;
 use crate::inference::Interaction;
 
-use std::sync::Mutex;
-
-#[derive(Copy, Clone)]
-pub(crate) struct CachedMessageInfo {
-    pub author_id: UserId,
-    pub channel_id: ChannelId,
-}
-
-impl From<&Message> for CachedMessageInfo {
-    fn from(message: &Message) -> Self {
-        CachedMessageInfo {
-            author_id: message.author.id,
-            channel_id: message.channel_id,
-        }
-    }
-}
-
-/// We keep our own message cache as serenity's message cache seems a bit limited and difficult
-/// to use. TODO: We might want to have all our own caches and turn off the cache feature.
 pub(crate) struct Handler {
-    message_info_cache: Mutex<LruCache<MessageId, CachedMessageInfo>>,
+    cache: Cache,
 }
 
 impl Handler {
     pub fn new() -> Self {
         Handler {
-            message_info_cache: Mutex::new(LruCache::new(1000)),
+            cache: Cache::new(),
         }
     }
 }
 
+// noinspection RsSortImplTraitMembers
 impl EventHandler for Handler {
-    fn message(&self, _ctx: Context, new_message: Message) {
+    fn guild_create(&self, _ctx: Context, guild: Guild) {
+        self.cache.put_full_guild(&guild);
+    }
+
+    fn guild_update(&self, _ctx: Context, guild: PartialGuild) {
+        self.cache.put_guild(&guild);
+    }
+
+    fn channel_create(&self, _ctx: Context, channel: Arc<RwLock<GuildChannel>>) {
+        let channel = channel.read();
+        self.cache.put_channel(&channel);
+    }
+
+    fn channel_update(&self, _ctx: Context, channel: Channel) {
+        if let Some(channel) = channel.guild() {
+            let channel = channel.read();
+            self.cache.put_channel(&channel);
+        }
+    }
+
+    fn message(&self, ctx: Context, new_message: Message) {
         if new_message.is_private() {
             // if !new_message.is_own(&ctx) {
             //     new_message.reply(&ctx, "Please don't DM me :(")
@@ -47,25 +50,10 @@ impl EventHandler for Handler {
             return;
         }
 
-        {
-            let mut message_info_cache = self.message_info_cache.lock().unwrap();
-
-            message_info_cache.put(new_message.id, CachedMessageInfo::from(&new_message));
-        }
-
-        // let user_mentions = new_message
-        //     .mentions
-        //     .iter()
-        //     .map(|u| u.id)
-        //     .collect::<Vec<UserId>>();
-        //
-        // println!(
-        //     "new message from {:?} in {:?}, mentions: {:?}",
-        //     new_message.author.id, new_message.channel_id, user_mentions,
-        // );
+        self.cache.put_message(&new_message);
 
         let interaction = Interaction::new_from_message(new_message);
-        println!("{:?}", interaction);
+        println!("{}", interaction.into_friendly_string(&ctx, &self.cache));
     }
 
     fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
@@ -74,31 +62,12 @@ impl EventHandler for Handler {
             return;
         }
 
-        let message_info = {
-            let mut message_info_cache = self.message_info_cache.lock().unwrap();
-
-            message_info_cache
-                .get(&add_reaction.message_id)
-                .cloned()
-                .unwrap_or_else(|| {
-                    let message = add_reaction
-                        .message(&ctx)
-                        .expect("message being reacted to doesn't exist");
-
-                    let message_info = CachedMessageInfo::from(&message);
-
-                    message_info_cache.put(message.id, message_info);
-
-                    message_info
-                })
-        };
-
-        // println!(
-        //     "{:?} reacted to a message by {:?} in {:?}",
-        //     add_reaction.user_id, message_info.author_id, message_info.channel_id,
-        // );
+        let message_info = self
+            .cache
+            .get_message(&ctx, add_reaction.channel_id, add_reaction.message_id)
+            .unwrap();
 
         let interaction = Interaction::new_from_reaction(add_reaction, message_info);
-        println!("{:?}", interaction);
+        println!("{}", interaction.into_friendly_string(&ctx, &self.cache));
     }
 }

@@ -9,3 +9,6 @@ serenity = { version = "0.8.6", default-features = false, features = ["client", 
 lru = "0.5.3"
 petgraph = { version = "0.5.1", default-features = false, features = ["serde-1", "graphmap"] }
 env_logger = "0.7.1"
+
+[patch.crates-io]
+serenity = { path = "../serenity" }
