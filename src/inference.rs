@@ -53,7 +53,7 @@ impl Interaction {
                     .get_member(ctx, guild_id, user.id)
                     .unwrap()
                     .nick
-                    .unwrap_or(user.name.clone()),
+                    .unwrap_or_else(|| user.name.clone()),
                 user.name,
                 user.discriminator
             )
@@ -74,7 +74,7 @@ impl Interaction {
 
         let channel_name = format!("#{}", cache.get_channel(&ctx, self.channel).unwrap().name);
 
-        let guild_name = cache.get_guild(&ctx, self.guild).unwrap().name.clone();
+        let guild_name = cache.get_guild(&ctx, self.guild).unwrap().name;
 
         match self.what {
             InteractionType::Message => format!(

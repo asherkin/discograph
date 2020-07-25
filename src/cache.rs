@@ -235,7 +235,7 @@ impl Cache {
                     roles
                         .iter()
                         .find(|role| role.id == role_id)
-                        .map(|role| CachedRole::from(role))
+                        .map(CachedRole::from)
                         .ok_or(SerenityError::Model(
                             serenity::model::error::Error::RoleNotFound,
                         ))
