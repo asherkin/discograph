@@ -4,8 +4,9 @@ use serenity::model::prelude::*;
 use serenity::prelude::{Mutex, SerenityError};
 use serenity::utils::Color;
 use serenity::Result as SerenityResult;
+use std::fmt;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedUser {
     pub id: UserId,
     pub name: String,
@@ -22,7 +23,7 @@ impl From<&User> for CachedUser {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedGuild {
     pub name: String,
     pub roles: Vec<RoleId>,
@@ -46,7 +47,7 @@ impl From<&Guild> for CachedGuild {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedRole {
     pub name: String,
     pub color: Color,
@@ -63,7 +64,7 @@ impl From<&Role> for CachedRole {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedMember {
     pub nick: Option<String>,
     pub roles: Vec<RoleId>,
@@ -87,7 +88,7 @@ impl From<&Member> for CachedMember {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedChannel {
     pub name: String,
 }
@@ -100,7 +101,7 @@ impl From<&GuildChannel> for CachedChannel {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct CachedMessage {
     pub author_id: UserId,
 }
@@ -127,8 +128,48 @@ pub(crate) struct Cache {
     messages: Mutex<LruCache<MessageId, CachedMessage>>,
 }
 
-/// The `get_*` functions in here release the lock while processing in order to support async in
-/// the future, and a potential switch to RwLock.
+/// A newtype to wrap LruCache, as LruCache's Debug impl doesn't print the container contents.
+struct PrintableLruCache<'a, K, V>(&'a Mutex<LruCache<K, V>>);
+
+impl<K: std::cmp::Eq + std::hash::Hash + fmt::Debug, V: fmt::Debug> fmt::Debug
+    for PrintableLruCache<'_, K, V>
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut m = f.debug_map();
+        for (k, v) in self.0.lock().iter() {
+            // Manually use format_args! to not propagate the alternate rendering mode
+            // so we get a more compat representation due to the size of these maps.
+            m.entry(&format_args!("{:?}", k), &format_args!("{:?}", v));
+        }
+        m.finish()
+    }
+}
+
+impl fmt::Debug for Cache {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Cache")
+            .field("users", &PrintableLruCache(&self.users))
+            .field("guilds", &PrintableLruCache(&self.guilds))
+            .field("roles", &PrintableLruCache(&self.roles))
+            .field("members", &PrintableLruCache(&self.members))
+            .field("channels", &PrintableLruCache(&self.channels))
+            .field("messages", &PrintableLruCache(&self.messages))
+            .finish()
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct CacheStats {
+    users: usize,
+    guilds: usize,
+    roles: usize,
+    members: usize,
+    channels: usize,
+    messages: usize,
+}
+
+// The `get_*` functions in here release the lock while processing in order to support async in
+// the future, and a potential switch to RwLock if we move away from LruCache.
 impl Cache {
     pub fn new() -> Self {
         // TODO: Tune these cache sizes.
@@ -141,6 +182,17 @@ impl Cache {
             members: Mutex::new(LruCache::new(CACHE_LIMIT)),
             channels: Mutex::new(LruCache::new(CACHE_LIMIT)),
             messages: Mutex::new(LruCache::new(CACHE_LIMIT)),
+        }
+    }
+
+    pub fn get_stats(&self) -> CacheStats {
+        CacheStats {
+            users: self.users.lock().len(),
+            guilds: self.guilds.lock().len(),
+            roles: self.roles.lock().len(),
+            members: self.members.lock().len(),
+            channels: self.channels.lock().len(),
+            messages: self.messages.lock().len(),
         }
     }
 
@@ -172,7 +224,10 @@ impl Cache {
 
     pub fn put_full_guild(&self, guild: &Guild) {
         for (_, channel) in guild.channels.iter() {
-            self.put_channel(&*channel.read());
+            let channel = channel.read();
+            if channel.kind == ChannelType::Text {
+                self.put_channel(&channel);
+            }
         }
 
         for (_, role) in guild.roles.iter() {
@@ -306,7 +361,9 @@ impl Cache {
                 let channel = channel.guild().expect("not a guild channel");
                 let channel = channel.read();
 
-                self.put_channel(&*channel);
+                if channel.kind == ChannelType::Text {
+                    self.put_channel(&*channel);
+                }
 
                 CachedChannel::from(&*channel)
             }),

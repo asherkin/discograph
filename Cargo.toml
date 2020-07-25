@@ -9,6 +9,7 @@ serenity = { version = "0.8.6", default-features = false, features = ["client", 
 lru = "0.5.3"
 petgraph = { version = "0.5.1", default-features = false, features = ["serde-1", "graphmap"] }
 env_logger = "0.7.1"
+nom = "5.1.2"
 
 [patch.crates-io]
 serenity = { git = "https://github.com/asherkin/serenity", branch = "piespy" }

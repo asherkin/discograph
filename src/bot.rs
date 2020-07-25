@@ -5,14 +5,17 @@ use std::sync::Arc;
 
 use crate::cache::Cache;
 use crate::inference::Interaction;
+use crate::parsing::Command;
 
 pub(crate) struct Handler {
+    id: RwLock<Option<UserId>>,
     cache: Cache,
 }
 
 impl Handler {
     pub fn new() -> Self {
         Handler {
+            id: RwLock::new(None),
             cache: Cache::new(),
         }
     }
@@ -20,6 +23,10 @@ impl Handler {
 
 // noinspection RsSortImplTraitMembers
 impl EventHandler for Handler {
+    fn ready(&self, _ctx: Context, data: Ready) {
+        self.id.write().replace(data.user.id);
+    }
+
     fn guild_create(&self, _ctx: Context, guild: Guild) {
         self.cache.put_full_guild(&guild);
     }
@@ -38,19 +45,51 @@ impl EventHandler for Handler {
 
     fn channel_create(&self, _ctx: Context, channel: Arc<RwLock<GuildChannel>>) {
         let channel = channel.read();
-        self.cache.put_channel(&channel);
+        if channel.kind == ChannelType::Text {
+            self.cache.put_channel(&channel);
+        }
     }
 
     fn channel_update(&self, _ctx: Context, channel: Channel) {
         if let Some(channel) = channel.guild() {
             let channel = channel.read();
-            self.cache.put_channel(&channel);
+            if channel.kind == ChannelType::Text {
+                self.cache.put_channel(&channel);
+            }
         }
     }
 
     fn message(&self, ctx: Context, new_message: Message) {
         if new_message.guild_id.is_none() || new_message.member.is_none() {
             return;
+        }
+
+        let our_id = self.id.read().unwrap();
+        if new_message.author.id == our_id {
+            return;
+        }
+
+        if new_message.mentions_user_id(our_id) {
+            if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
+                match command {
+                    Command::CacheStats => {
+                        new_message
+                            .reply(&ctx, format!("{:?}", self.cache.get_stats()))
+                            .unwrap();
+                    }
+                    Command::CacheDump => {
+                        println!("{:#?}", self.cache);
+                        new_message.react(&ctx, "\u{2705}").unwrap();
+                    }
+                    Command::Unknown(command) => {
+                        new_message
+                            .reply(&ctx, format!("Unknown command: {}", command))
+                            .unwrap();
+                    }
+                };
+
+                return;
+            }
         }
 
         self.cache.put_message(&new_message);
@@ -61,6 +100,11 @@ impl EventHandler for Handler {
 
     fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
         if add_reaction.guild_id.is_none() || add_reaction.member.is_none() {
+            return;
+        }
+
+        let our_id = self.id.read().unwrap();
+        if add_reaction.user_id == our_id {
             return;
         }
 
