@@ -11,4 +11,4 @@ petgraph = { version = "0.5.1", default-features = false, features = ["serde-1",
 env_logger = "0.7.1"
 
 [patch.crates-io]
-serenity = { path = "../serenity" }
+serenity = { git = "https://github.com/asherkin/serenity", branch = "piespy" }
