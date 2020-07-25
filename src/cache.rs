@@ -7,6 +7,7 @@ use serenity::Result as SerenityResult;
 
 #[derive(Clone)]
 pub(crate) struct CachedUser {
+    pub id: UserId,
     pub name: String,
     pub discriminator: u16,
 }
@@ -14,6 +15,7 @@ pub(crate) struct CachedUser {
 impl From<&User> for CachedUser {
     fn from(user: &User) -> Self {
         CachedUser {
+            id: user.id,
             name: user.name.clone(),
             discriminator: user.discriminator,
         }
@@ -237,6 +239,10 @@ impl Cache {
     }
 
     pub fn put_member(&self, guild_id: GuildId, user_id: UserId, member: &PartialMember) {
+        if let Some(user) = &member.user {
+            self.put_user(user);
+        }
+
         let mut cache = self.members.lock();
         cache.put((guild_id, user_id), CachedMember::from(member));
     }

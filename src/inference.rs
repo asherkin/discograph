@@ -45,20 +45,32 @@ impl Interaction {
         }
     }
 
-    pub fn into_friendly_string(self, ctx: &Context, cache: &Cache) -> String {
-        let user_to_display_name = |u: CachedUser| format!("{}#{:04}", u.name, u.discriminator);
+    pub fn to_string(&self, ctx: &Context, cache: &Cache) -> String {
+        let user_to_display_name = |guild_id: GuildId, user: CachedUser| {
+            format!(
+                "\"{}\" ({}#{:04})",
+                cache
+                    .get_member(ctx, guild_id, user.id)
+                    .unwrap()
+                    .nick
+                    .unwrap_or(user.name.clone()),
+                user.name,
+                user.discriminator
+            )
+        };
 
         let source_name = cache
             .get_user(&ctx, self.source)
-            .map(user_to_display_name)
+            .map(|u| user_to_display_name(self.guild, u))
             .unwrap();
 
         let target_names = self
             .targets
             .iter()
             .map(|u| cache.get_user(&ctx, *u).unwrap())
-            .map(user_to_display_name)
-            .collect::<Vec<String>>();
+            .map(|u| user_to_display_name(self.guild, u))
+            .collect::<Vec<String>>()
+            .join(", ");
 
         let channel_name = format!("#{}", cache.get_channel(&ctx, self.channel).unwrap().name);
 
@@ -66,15 +78,12 @@ impl Interaction {
 
         match self.what {
             InteractionType::Message => format!(
-                "new message from {:?} in {:?} @ {:?}, mentions: {:?}",
+                "new message from {} in {} @ \"{}\", mentions: [{}]",
                 source_name, channel_name, guild_name, target_names
             ),
             InteractionType::Reaction => format!(
-                "{:?} reacted to a message by {:?} in {:?} @ {:?}",
-                source_name,
-                target_names.first().unwrap(),
-                channel_name,
-                guild_name
+                "{} reacted to a message by {} in {} @ \"{}\"",
+                source_name, target_names, channel_name, guild_name
             ),
         }
     }
