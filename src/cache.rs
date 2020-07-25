@@ -25,12 +25,14 @@ impl From<&User> for CachedUser {
 #[derive(Clone)]
 pub(crate) struct CachedGuild {
     pub name: String,
+    pub roles: Vec<RoleId>,
 }
 
 impl From<&PartialGuild> for CachedGuild {
     fn from(guild: &PartialGuild) -> Self {
         CachedGuild {
             name: guild.name.clone(),
+            roles: guild.roles.keys().cloned().collect(),
         }
     }
 }
@@ -39,6 +41,7 @@ impl From<&Guild> for CachedGuild {
     fn from(guild: &Guild) -> Self {
         CachedGuild {
             name: guild.name.clone(),
+            roles: guild.roles.keys().cloned().collect(),
         }
     }
 }
@@ -205,6 +208,8 @@ impl Cache {
         cache.put(role.id, CachedRole::from(role));
     }
 
+    // TODO: This'll be needed for rendering.
+    #[allow(dead_code)]
     pub fn get_role(
         &self,
         http: impl AsRef<Http>,
