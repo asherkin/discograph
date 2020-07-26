@@ -2,6 +2,7 @@ use serenity::model::id::UserId;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum Command {
+    Invite,
     CacheStats,
     CacheDump,
     Unknown(String),
@@ -10,6 +11,7 @@ pub(crate) enum Command {
 impl Command {
     pub fn new_from_message(our_id: UserId, message: &str) -> Option<Command> {
         match internal::direct_mention_command(message, our_id.0) {
+            Ok((_, "invite")) => Some(Command::Invite),
             Ok((_, "cache stats")) => Some(Command::CacheStats),
             Ok((_, "cache dump")) => Some(Command::CacheDump),
             Ok((_, command)) => Some(Command::Unknown(command.to_string())),

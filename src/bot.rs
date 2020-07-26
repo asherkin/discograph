@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::cache::Cache;
 use crate::inference::Interaction;
 use crate::parsing::Command;
+use serenity::utils::Color;
 
 pub(crate) struct Handler {
     id: RwLock<Option<UserId>>,
@@ -23,8 +24,13 @@ impl Handler {
 
 // noinspection RsSortImplTraitMembers
 impl EventHandler for Handler {
-    fn ready(&self, _ctx: Context, data: Ready) {
+    fn ready(&self, ctx: Context, data: Ready) {
         self.id.write().replace(data.user.id);
+
+        ctx.set_activity(Activity::watching(&format!(
+            "you: @{} invite",
+            data.user.name
+        )));
     }
 
     fn guild_create(&self, _ctx: Context, guild: Guild) {
@@ -72,6 +78,17 @@ impl EventHandler for Handler {
         if new_message.mentions_user_id(our_id) {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
+                    Command::Invite => {
+                        new_message.channel_id.send_message(&ctx, |message| {
+                            message.embed(|embed| {
+                                embed.title("Invite me!")
+                                    .url(format!("https://discord.com/api/oauth2/authorize?client_id={}&permissions=85056&scope=bot", our_id))
+                                    .description(format!("Click the link above to invite me to your server\n\nRequested By: {}#{:04}", new_message.author.name, new_message.author.discriminator))
+                                    .color(Color::from_rgb(255, 255, 255))
+                                    .thumbnail(/* TODO: Host our own copy. */ "https://i.imgur.com/CZFt69d.png")
+                            })
+                        }).unwrap();
+                    }
                     Command::CacheStats => {
                         new_message
                             .reply(&ctx, format!("{:?}", self.cache.get_stats()))

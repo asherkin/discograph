@@ -938,7 +938,7 @@ dependencies = [
 [[package]]
 name = "serenity"
 version = "0.8.6"
-source = "git+https://github.com/asherkin/serenity?branch=piespy#16d4df7850e581077ddbcb3ae8371fad6ff03cfc"
+source = "git+https://github.com/asherkin/serenity?branch=piespy#e63a275a2243eb1ee1b458c4ed4d0d3de17e894f"
 dependencies = [
  "base64 0.12.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
