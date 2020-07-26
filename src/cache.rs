@@ -300,7 +300,8 @@ impl Cache {
 
     pub fn put_member(&self, guild_id: GuildId, user_id: UserId, member: &PartialMember) {
         if let Some(user) = &member.user {
-            self.put_user(user);
+            let user = user.read();
+            self.put_user(&*user);
         }
 
         let mut cache = self.members.lock();
@@ -309,7 +310,6 @@ impl Cache {
 
     pub fn put_full_member(&self, member: &Member) {
         let user = member.user.read();
-
         self.put_user(&*user);
 
         let mut cache = self.members.lock();
@@ -374,7 +374,16 @@ impl Cache {
         self.put_user(&message.author);
 
         if let (Some(guild_id), Some(member)) = (message.guild_id, &message.member) {
-            self.put_member(guild_id, message.author.id, &member);
+            self.put_member(guild_id, message.author.id, member);
+        }
+
+        for mentioned_user in &message.mentions {
+            self.put_user(mentioned_user);
+
+            // We can't do this in `put_user` as it needs the guild ID.
+            if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
+                self.put_member(guild_id, mentioned_user.id, member);
+            }
         }
 
         let mut cache = self.messages.lock();
