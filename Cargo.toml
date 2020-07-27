@@ -19,7 +19,7 @@ features = ["client", "gateway", "http", "model", "rustls_backend"]
 [dependencies.petgraph]
 version = "0.5.1"
 default-features = false
-features = ["serde-1", "graphmap"]
+features = ["graphmap"]
 
 #[patch."https://github.com/asherkin/serenity"]
 #serenity = { path = "../serenity" }
