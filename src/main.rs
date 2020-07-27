@@ -24,5 +24,11 @@ fn main() {
     })
     .unwrap();
 
-    client.start_autosharded().unwrap();
+    let gateway_info = client.cache_and_http.http.get_bot_gateway().unwrap();
+
+    println!("{:?}", gateway_info.session_start_limit);
+
+    // We don't use `start_autosharded` so we can log the rate limit info.
+    println!("starting {} shards", gateway_info.shards);
+    client.start_shards(gateway_info.shards).unwrap();
 }

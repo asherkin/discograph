@@ -8,17 +8,19 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CachedUser {
-    pub id: UserId,
     pub name: String,
     pub discriminator: u16,
+    pub avatar: Option<String>,
+    pub bot: bool,
 }
 
 impl From<&User> for CachedUser {
     fn from(user: &User) -> Self {
         CachedUser {
-            id: user.id,
             name: user.name.clone(),
             discriminator: user.discriminator,
+            avatar: user.avatar.clone(),
+            bot: user.bot,
         }
     }
 }
@@ -26,6 +28,7 @@ impl From<&User> for CachedUser {
 #[derive(Debug, Clone)]
 pub(crate) struct CachedGuild {
     pub name: String,
+    pub icon: Option<String>,
     pub roles: Vec<RoleId>,
 }
 
@@ -33,6 +36,7 @@ impl From<&PartialGuild> for CachedGuild {
     fn from(guild: &PartialGuild) -> Self {
         CachedGuild {
             name: guild.name.clone(),
+            icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
         }
     }
@@ -42,6 +46,7 @@ impl From<&Guild> for CachedGuild {
     fn from(guild: &Guild) -> Self {
         CachedGuild {
             name: guild.name.clone(),
+            icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
         }
     }
@@ -104,12 +109,14 @@ impl From<&GuildChannel> for CachedChannel {
 #[derive(Debug, Clone)]
 pub(crate) struct CachedMessage {
     pub author_id: UserId,
+    pub kind: MessageType,
 }
 
 impl From<&Message> for CachedMessage {
     fn from(message: &Message) -> Self {
         CachedMessage {
             author_id: message.author.id,
+            kind: message.kind,
         }
     }
 }

@@ -1,16 +1,19 @@
+use petgraph::dot::{Config, Dot};
+use petgraph::visit::NodeRef;
 use serenity::model::prelude::*;
-use serenity::prelude::{Context, EventHandler, RwLock};
+use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
+use serenity::utils::Color;
 
 use std::sync::Arc;
 
 use crate::cache::Cache;
-use crate::inference::Interaction;
+use crate::inference::{Interaction, SocialGraph};
 use crate::parsing::Command;
-use serenity::utils::Color;
 
 pub(crate) struct Handler {
     id: RwLock<Option<UserId>>,
     cache: Cache,
+    social: Mutex<SocialGraph>,
 }
 
 impl Handler {
@@ -18,7 +21,41 @@ impl Handler {
         Handler {
             id: RwLock::new(None),
             cache: Cache::new(),
+            social: Mutex::new(SocialGraph::new()),
         }
+    }
+
+    pub fn process_interaction(&self, ctx: &Context, guild_id: GuildId, interaction: Interaction) {
+        println!("{}", interaction.to_string(ctx, &self.cache));
+
+        let mut social = self.social.lock();
+
+        let changes = social.infer(&interaction);
+        for change in &changes {
+            println!("-> {:?}", change);
+        }
+
+        social.apply(&interaction, &changes);
+
+        let guild_graph = social
+            .build_guild_graph(guild_id)
+            .unwrap()
+            .into_graph::<usize>();
+
+        println!(
+            "{}",
+            Dot::with_attr_getters(
+                &guild_graph,
+                &[Config::NodeNoLabel, Config::EdgeNoLabel],
+                &|_, er| format!("label = \"{}\"", er.weight()),
+                &|_, nr| {
+                    format!(
+                        "label = \"{}\"",
+                        self.cache.get_user(&ctx, *nr.weight()).unwrap().name
+                    )
+                },
+            )
+        );
     }
 }
 
@@ -75,6 +112,7 @@ impl EventHandler for Handler {
             return;
         }
 
+        // TODO: It would be good to handle commands from DMs as well.
         if new_message.mentions_user_id(our_id) {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
@@ -111,8 +149,14 @@ impl EventHandler for Handler {
 
         self.cache.put_message(&new_message);
 
-        let interaction = Interaction::new_from_message(new_message);
-        println!("{}", interaction.to_string(&ctx, &self.cache));
+        // This needs to be done after putting the message in the cache
+        // as we need to know it when handling reactions.
+        if new_message.kind != MessageType::Regular {
+            return;
+        }
+
+        let interaction = Interaction::new_from_message(&new_message);
+        self.process_interaction(&ctx, new_message.guild_id.unwrap(), interaction);
     }
 
     fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
@@ -136,7 +180,11 @@ impl EventHandler for Handler {
             .get_message(&ctx, add_reaction.channel_id, add_reaction.message_id)
             .unwrap();
 
-        let interaction = Interaction::new_from_reaction(add_reaction, message_info);
-        println!("{}", interaction.to_string(&ctx, &self.cache));
+        if message_info.kind != MessageType::Regular {
+            return;
+        }
+
+        let interaction = Interaction::new_from_reaction(&add_reaction, &message_info);
+        self.process_interaction(&ctx, add_reaction.guild_id.unwrap(), interaction);
     }
 }

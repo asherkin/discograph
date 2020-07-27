@@ -20,6 +20,13 @@ impl Command {
     }
 }
 
+pub fn parse_direct_mention(message: &str) -> Option<UserId> {
+    match internal::direct_mention(message) {
+        Ok((_, id)) => Some(UserId(id)),
+        Err(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +97,11 @@ pub(super) mod internal {
 
         let (remaining, _) = many0(tuple((quote_start, not_line_ending, line_ending)))(input)?;
         Ok((remaining, ()))
+    }
+
+    pub fn direct_mention(input: &str) -> IResult<&str, u64> {
+        let (remaining, (_, id)) = tuple((consume_quote, user_mention))(input)?;
+        Ok((remaining, id))
     }
 
     pub fn direct_mention_command(input: &str, wanted_id: u64) -> IResult<&str, &str> {
