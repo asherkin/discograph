@@ -1,32 +1,40 @@
-use petgraph::dot::{Config, Dot};
-use petgraph::visit::NodeRef;
 use serenity::model::prelude::*;
 use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
 use serenity::utils::Color;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cache::Cache;
-use crate::inference::{Interaction, SocialGraph};
+use crate::inference::Interaction;
 use crate::parsing::Command;
+use crate::social::SocialGraph;
 
-pub(crate) struct Handler {
+#[derive(Debug, Eq, PartialEq)]
+pub enum BotEnvironment {
+    Development,
+    Production,
+}
+
+pub struct Handler {
+    environment: BotEnvironment,
     id: RwLock<Option<UserId>>,
     cache: Cache,
     social: Mutex<SocialGraph>,
 }
 
 impl Handler {
-    pub fn new() -> Self {
+    pub fn new(data_dir: Option<PathBuf>, environment: BotEnvironment) -> Self {
         Handler {
+            environment,
             id: RwLock::new(None),
             cache: Cache::new(),
-            social: Mutex::new(SocialGraph::new()),
+            social: Mutex::new(SocialGraph::new(data_dir)),
         }
     }
 
-    pub fn process_interaction(&self, ctx: &Context, guild_id: GuildId, interaction: Interaction) {
-        println!("{}", interaction.to_string(ctx, &self.cache));
+    pub fn process_interaction(&self, ctx: &Context, interaction: Interaction) {
+        println!("{}", interaction.to_string(&ctx, &self.cache));
 
         let mut social = self.social.lock();
 
@@ -36,26 +44,6 @@ impl Handler {
         }
 
         social.apply(&interaction, &changes);
-
-        let guild_graph = social
-            .build_guild_graph(guild_id)
-            .unwrap()
-            .into_graph::<usize>();
-
-        println!(
-            "{}",
-            Dot::with_attr_getters(
-                &guild_graph,
-                &[Config::NodeNoLabel, Config::EdgeNoLabel],
-                &|_, er| format!("label = \"{}\"", er.weight()),
-                &|_, nr| {
-                    format!(
-                        "label = \"{}\"",
-                        self.cache.get_user(&ctx, *nr.weight()).unwrap().name
-                    )
-                },
-            )
-        );
     }
 }
 
@@ -63,6 +51,13 @@ impl Handler {
 impl EventHandler for Handler {
     fn ready(&self, ctx: Context, data: Ready) {
         self.id.write().replace(data.user.id);
+
+        // TODO: Send a message to all instances of ourself for coordination.
+        //       This needs to come from configuration - and needs a lot of work.
+        //       It is probably worthwhile to do though as we'll be able to have a set of
+        //       production bots and do 0-downtime deploys between them (with a shared DB),
+        //       and run development versions without having them all respond to commands.
+        // ChannelId(735953391687303260).say(&ctx, "Good morning!").unwrap();
 
         ctx.set_activity(Activity::watching(&format!(
             "you: @{} invite",
@@ -72,6 +67,12 @@ impl EventHandler for Handler {
 
     fn guild_create(&self, _ctx: Context, guild: Guild) {
         self.cache.put_full_guild(&guild);
+
+        // Load any existing graphs into memory for the guild's channels.
+        let mut social = self.social.lock();
+        for &channel_id in guild.channels.keys() {
+            social.get_graph(guild.id, channel_id);
+        }
     }
 
     fn guild_update(&self, _ctx: Context, guild: PartialGuild) {
@@ -90,6 +91,10 @@ impl EventHandler for Handler {
         let channel = channel.read();
         if channel.kind == ChannelType::Text {
             self.cache.put_channel(&channel);
+
+            // Load any existing graph into memory for the channel.
+            let mut social = self.social.lock();
+            social.get_graph(channel.guild_id, channel.id);
         }
     }
 
@@ -117,6 +122,10 @@ impl EventHandler for Handler {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
                     Command::Invite => {
+                        if self.environment != BotEnvironment::Production {
+                            return;
+                        }
+
                         new_message.channel_id.send_message(&ctx, |message| {
                             message.embed(|embed| {
                                 embed.title("Invite me!")
@@ -136,7 +145,31 @@ impl EventHandler for Handler {
                         println!("{:#?}", self.cache);
                         new_message.react(&ctx, "\u{2705}").unwrap();
                     }
+                    Command::GraphDump => {
+                        let mut files = Vec::new();
+                        let social = self.social.lock();
+                        for guild_id in social.get_all_guild_ids() {
+                            let guild_name = self.cache.get_guild(&ctx, *guild_id).unwrap().name;
+                            let graph = social.build_guild_graph(*guild_id).unwrap();
+                            let dot = graph.to_dot(&ctx, &self.cache);
+                            files.push((dot, format!("{}.dot", guild_name)));
+                        }
+
+                        let files: Vec<(&[u8], &str)> = files
+                            .iter()
+                            .map(|(contents, name)| (contents.as_bytes(), name.as_ref()))
+                            .collect();
+
+                        new_message
+                            .channel_id
+                            .send_files(&ctx, files, |m| m.content("Files attached!"))
+                            .unwrap();
+                    }
                     Command::Unknown(command) => {
+                        if self.environment != BotEnvironment::Production {
+                            return;
+                        }
+
                         new_message
                             .reply(&ctx, format!("Unknown command: {}", command))
                             .unwrap();
@@ -156,7 +189,7 @@ impl EventHandler for Handler {
         }
 
         let interaction = Interaction::new_from_message(&new_message);
-        self.process_interaction(&ctx, new_message.guild_id.unwrap(), interaction);
+        self.process_interaction(&ctx, interaction);
     }
 
     fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
@@ -185,6 +218,6 @@ impl EventHandler for Handler {
         }
 
         let interaction = Interaction::new_from_reaction(&add_reaction, &message_info);
-        self.process_interaction(&ctx, add_reaction.guild_id.unwrap(), interaction);
+        self.process_interaction(&ctx, interaction);
     }
 }

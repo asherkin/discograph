@@ -7,7 +7,7 @@ use serenity::Result as SerenityResult;
 use std::fmt;
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedUser {
+pub struct CachedUser {
     pub name: String,
     pub discriminator: u16,
     pub avatar: Option<String>,
@@ -26,7 +26,7 @@ impl From<&User> for CachedUser {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedGuild {
+pub struct CachedGuild {
     pub name: String,
     pub icon: Option<String>,
     pub roles: Vec<RoleId>,
@@ -53,7 +53,7 @@ impl From<&Guild> for CachedGuild {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedRole {
+pub struct CachedRole {
     pub name: String,
     pub color: Color,
     pub position: i64,
@@ -70,7 +70,7 @@ impl From<&Role> for CachedRole {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedMember {
+pub struct CachedMember {
     pub nick: Option<String>,
     pub roles: Vec<RoleId>,
 }
@@ -94,7 +94,7 @@ impl From<&Member> for CachedMember {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedChannel {
+pub struct CachedChannel {
     pub name: String,
 }
 
@@ -107,7 +107,7 @@ impl From<&GuildChannel> for CachedChannel {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CachedMessage {
+pub struct CachedMessage {
     pub author_id: UserId,
     pub kind: MessageType,
 }
@@ -125,7 +125,7 @@ impl From<&Message> for CachedMessage {
 // TODO: I don't think the rest of these should be LRU other than messages, as we need them for
 //       all active objects. Investigate more once we have the GraphMap implemented.
 //       A bonus of non-LRU maps here would be the ability to use RwLock.
-pub(crate) struct Cache {
+pub struct Cache {
     users: Mutex<LruCache<UserId, CachedUser>>,
     guilds: Mutex<LruCache<GuildId, CachedGuild>>,
     roles: Mutex<LruCache<RoleId, CachedRole>>,
@@ -166,7 +166,7 @@ impl fmt::Debug for Cache {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct CacheStats {
+pub struct CacheStats {
     users: usize,
     guilds: usize,
     roles: usize,

@@ -6,20 +6,17 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [dependencies]
-lru = "0.5.3"
-env_logger = "0.7.1"
-nom = "5.1.2"
+lru = "0.5"
+env_logger = "0.7"
+nom = "5"
+serde = "1"
+serde_json = "1"
 
 [dependencies.serenity]
 git = "https://github.com/asherkin/serenity"
 branch = "piespy"
 default-features = false
 features = ["client", "gateway", "http", "model", "rustls_backend"]
-
-[dependencies.petgraph]
-version = "0.5.1"
-default-features = false
-features = ["graphmap"]
 
 #[patch."https://github.com/asherkin/serenity"]
 #serenity = { path = "../serenity" }

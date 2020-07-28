@@ -1,29 +1,27 @@
-use petgraph::graphmap::DiGraphMap;
-use petgraph::EdgeDirection;
 use serenity::client::Context;
 use serenity::model::prelude::*;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use crate::cache::{Cache, CachedMessage, CachedUser};
 use crate::parsing::parse_direct_mention;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum InteractionType {
+pub enum InteractionType {
     Message,
     Reaction,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Interaction {
-    what: InteractionType,
-    when: Instant,
-    guild: GuildId,
-    channel: ChannelId,
-    source: UserId,
-    target: Option<UserId>,
-    other_targets: Vec<UserId>,
+pub struct Interaction {
+    pub what: InteractionType,
+    pub when: Instant,
+    pub guild: GuildId,
+    pub channel: ChannelId,
+    pub source: UserId,
+    pub target: Option<UserId>,
+    pub other_targets: Vec<UserId>,
 }
 
 impl Interaction {
@@ -114,45 +112,46 @@ pub enum RelationshipChangeReason {
     MessageBinarySequence,
 }
 
-const RELATIONSHIP_DECAY: RelationshipStrength = -0.0001;
+pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.0001;
 
 impl RelationshipChangeReason {
-    fn get_change_strength(&self) -> RelationshipStrength {
+    pub fn get_change_strength(&self) -> RelationshipStrength {
         match self {
             Self::Reaction => 0.1,
-            Self::MessageDirectMention => 5.0,
-            Self::MessageIndirectMention => 2.0,
+            Self::MessageDirectMention => 2.0,
+            Self::MessageIndirectMention => 1.0,
             Self::MessageAdjacency => 0.5,
-            Self::MessageBinarySequence => 1.0,
+            // TODO: Increase weight back to 1.0 once implementation is fixed.
+            Self::MessageBinarySequence => 0.333,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct RelationshipChange {
-    source: UserId,
-    target: UserId,
-    reason: RelationshipChangeReason,
+    pub source: UserId,
+    pub target: UserId,
+    pub reason: RelationshipChangeReason,
 }
 
 const MESSAGE_HISTORY_COUNT: usize = 5;
 
 #[derive(Debug)]
-struct InferenceState {
+pub struct InferenceState {
     /// Recent messages to channel, used to infer temporal proximity.
     /// Limited to `MESSAGE_HISTORY_COUNT`, latest entries at the front.
     history: VecDeque<Interaction>,
 }
 
 impl InferenceState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         InferenceState {
             history: VecDeque::new(),
         }
     }
 
     // TODO: Re-write this as a set of inference engines.
-    fn infer(&mut self, changes: &mut Vec<RelationshipChange>, interaction: &Interaction) {
+    pub fn infer(&mut self, changes: &mut Vec<RelationshipChange>, interaction: &Interaction) {
         let source = interaction.source;
 
         if let Some(target) = interaction.target {
@@ -180,6 +179,11 @@ impl InferenceState {
 
         if let Some(last) = self.history.front() {
             // If the last message isn't from the same author, and was less than 2 minutes ago.
+            // TODO: There might be a reasonable dynamic option here where we set the later
+            //       threshold to 5x (or something) the time difference here. Discord seems
+            //       to move a bit quick for these limits. Often in #sourcemod there will be
+            //       a reply within 30 seconds or so to a question answered only a couple of
+            //       minutes after the previous message.
             if last.source != source
                 && interaction.when.duration_since(last.when).as_secs() < (60 * 2)
             {
@@ -214,8 +218,11 @@ impl InferenceState {
             .map(|i| i.source)
             .collect::<HashSet<UserId>>();
 
-        // This can trigger early when the bot first starts.
-        // The original waits for the history list to be full *and* clears it each time it triggers.
+        // TODO: This is triggering far too often, especially after the bot first starts.
+        //       The original waits for the history list to be full *and* clears it each
+        //       time it triggers. It'd be good to do the same here, but I'm not sure if
+        //       we can without losing the single state storage. That said, if we split
+        //       these up like the original, MessageAdjacency will be a lot simpler.
         if unique_sources.len() == 2 {
             let mut unique_sources = unique_sources.iter();
             let first = unique_sources.next().unwrap();
@@ -228,138 +235,5 @@ impl InferenceState {
                 reason: RelationshipChangeReason::MessageBinarySequence,
             });
         }
-    }
-}
-
-type UserRelationshipGraphMap = DiGraphMap<UserId, RelationshipStrength>;
-
-#[derive(Debug)]
-pub(crate) struct SocialGraph {
-    graph: HashMap<GuildId, HashMap<ChannelId, UserRelationshipGraphMap>>,
-    state: HashMap<(GuildId, ChannelId), InferenceState>,
-}
-
-impl SocialGraph {
-    pub fn new() -> Self {
-        SocialGraph {
-            graph: HashMap::new(),
-            state: HashMap::new(),
-        }
-    }
-
-    /// Helper function to run inference with the right state.
-    pub fn infer(&mut self, interaction: &Interaction) -> Vec<RelationshipChange> {
-        let mut changes = Vec::new();
-
-        self.state
-            .entry((interaction.guild, interaction.channel))
-            .or_insert_with(InferenceState::new)
-            .infer(&mut changes, interaction);
-
-        changes
-    }
-
-    /// Apply a set of relationship changes to the graph.
-    pub fn apply(&mut self, interaction: &Interaction, changes: &[RelationshipChange]) {
-        let graph = self.get_graph(interaction.guild, interaction.channel);
-
-        Self::decay(graph, RELATIONSHIP_DECAY);
-
-        for change in changes {
-            match graph.edge_weight_mut(change.source, change.target) {
-                Some(weight) => {
-                    *weight += change.reason.get_change_strength();
-                }
-                None => {
-                    graph.add_edge(
-                        change.source,
-                        change.target,
-                        change.reason.get_change_strength(),
-                    );
-                }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_channel_graph(
-        &self,
-        guild_id: GuildId,
-        channel_id: ChannelId,
-    ) -> Option<&UserRelationshipGraphMap> {
-        self.graph.get(&guild_id).and_then(|g| g.get(&channel_id))
-    }
-
-    pub fn build_guild_graph(&self, guild_id: GuildId) -> Option<UserRelationshipGraphMap> {
-        let guild = self.graph.get(&guild_id)?;
-
-        let mut guild_graph = UserRelationshipGraphMap::new();
-        for channel_graph in guild.values() {
-            for (source, target, weight) in channel_graph.all_edges() {
-                match guild_graph.edge_weight_mut(source, target) {
-                    Some(new_weight) => {
-                        *new_weight += weight;
-                    }
-                    None => {
-                        guild_graph.add_edge(source, target, *weight);
-                    }
-                }
-            }
-        }
-
-        Some(guild_graph)
-    }
-
-    fn get_graph(
-        &mut self,
-        guild_id: GuildId,
-        channel_id: ChannelId,
-    ) -> &mut UserRelationshipGraphMap {
-        self.graph
-            .entry(guild_id)
-            .or_insert_with(HashMap::new)
-            .entry(channel_id)
-            .or_insert_with(DiGraphMap::new)
-    }
-
-    fn decay(graph: &mut UserRelationshipGraphMap, amount: RelationshipStrength) -> (usize, usize) {
-        let mut edges_to_remove = Vec::new();
-        let mut nodes_to_check = HashSet::new();
-
-        for (source, target, relationship) in graph.all_edges_mut() {
-            *relationship += amount;
-
-            if *relationship <= 0.0 {
-                edges_to_remove.push((source, target));
-
-                nodes_to_check.insert(source);
-                nodes_to_check.insert(target);
-            }
-        }
-
-        let mut removed_edges = 0;
-        for (source, target) in edges_to_remove {
-            graph.remove_edge(source, target);
-            removed_edges += 1;
-        }
-
-        let mut removed_nodes = 0;
-        for node in nodes_to_check {
-            // TODO: Can we do this any better?
-            let has_incoming = graph
-                .neighbors_directed(node, EdgeDirection::Incoming)
-                .next()
-                .is_none();
-            let has_outgoing = graph
-                .neighbors_directed(node, EdgeDirection::Outgoing)
-                .next()
-                .is_none();
-            if !has_incoming && !has_outgoing {
-                graph.remove_node(node);
-                removed_nodes += 1;
-            }
-        }
-
-        (removed_nodes, removed_edges)
     }
 }

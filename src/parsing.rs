@@ -1,10 +1,11 @@
 use serenity::model::id::UserId;
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum Command {
+pub enum Command {
     Invite,
     CacheStats,
     CacheDump,
+    GraphDump, // TODO: Let this take a GuildId.
     Unknown(String),
 }
 
@@ -14,6 +15,7 @@ impl Command {
             Ok((_, "invite")) => Some(Command::Invite),
             Ok((_, "cache stats")) => Some(Command::CacheStats),
             Ok((_, "cache dump")) => Some(Command::CacheDump),
+            Ok((_, "graph dump")) => Some(Command::GraphDump),
             Ok((_, command)) => Some(Command::Unknown(command.to_string())),
             Err(_) => None,
         }
