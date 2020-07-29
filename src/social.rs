@@ -59,39 +59,69 @@ impl UserRelationshipGraphMap {
     }
 
     pub fn to_dot(&self, ctx: &Context, cache: &Cache) -> String {
-        let mut user_ids = HashSet::new();
+        // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
         for (&(source, target), new_weight) in &self.0 {
-            user_ids.insert(source);
-            user_ids.insert(target);
+            // Ignore self-connected edges.
+            if source == target {
+                continue;
+            }
 
+            // Sort the key to make it direction-independent.
             let mut key = [source, target];
             key.sort();
 
+            // As we're collapsing directed edges, we need to sum the weights.
             let weight: &mut RelationshipStrength = undirected_edges.entry(key).or_default();
             *weight += new_weight;
         }
 
-        let mut lines = Vec::with_capacity(5 + user_ids.len() + undirected_edges.len() + 1);
+        // Remove any edges that have a weight under the threshold and build a list of unique user IDs.
+        let mut user_ids = HashSet::new();
+        undirected_edges.retain(|&[source, target], weight| {
+            if *weight > 0.4 {
+                user_ids.insert(source);
+                user_ids.insert(target);
+
+                true
+            } else {
+                false
+            }
+        });
+
+        // Get the username for each user ID, ignoring failed lookups or bots.
+        // TODO: This can be *very* slow if the user isn't in the cache.
+        let usernames: HashMap<UserId, String> = user_ids
+            .iter()
+            .filter_map(|&user_id| {
+                let user = cache.get_user(&ctx, user_id).ok()?;
+                if user.bot {
+                    return None;
+                }
+
+                Some((user_id, user.name))
+            })
+            .collect();
+
+        // Filter any edges that were to bots or we couldn't lookup.
+        undirected_edges.retain(|[source, target], _| {
+            usernames.contains_key(source) && usernames.contains_key(target)
+        });
+
+        let mut lines = Vec::with_capacity(6 + usernames.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
         lines.push(String::from("    K = \"0.05\""));
         lines.push(String::from("    splines = \"true\""));
+        lines.push(String::from("    overlap = \"30:true\""));
         lines.push(String::from("    edge [ fontsize = \"0\" ]"));
 
-        lines.reserve(user_ids.len() + undirected_edges.len() + 1);
-
-        for user_id in user_ids {
-            let user = cache.get_user(&ctx, user_id);
-            if user.is_err() {
-                continue;
-            }
-
+        for (user_id, name) in usernames {
             lines.push(format!(
                 "    {} [ label = \"{}\" ]",
                 user_id,
-                user.unwrap().name.replace("\"", "\\\""),
+                name.replace("\"", "\\\""),
             ));
         }
 

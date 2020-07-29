@@ -122,7 +122,7 @@ impl RelationshipChangeReason {
             Self::MessageIndirectMention => 1.0,
             Self::MessageAdjacency => 0.5,
             // TODO: Increase weight back to 1.0 once implementation is fixed.
-            Self::MessageBinarySequence => 0.333,
+            Self::MessageBinarySequence => 0.5,
         }
     }
 }

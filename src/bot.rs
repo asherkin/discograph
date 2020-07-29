@@ -148,9 +148,12 @@ impl EventHandler for Handler {
                     Command::GraphDump => {
                         let mut files = Vec::new();
                         let social = self.social.lock();
-                        for guild_id in social.get_all_guild_ids() {
-                            let guild_name = self.cache.get_guild(&ctx, *guild_id).unwrap().name;
-                            let graph = social.build_guild_graph(*guild_id).unwrap();
+                        for &guild_id in social.get_all_guild_ids() {
+                            new_message.channel_id.broadcast_typing(&ctx).unwrap();
+                            println!("building guild graph for {}", guild_id);
+
+                            let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
+                            let graph = social.build_guild_graph(guild_id).unwrap();
                             let dot = graph.to_dot(&ctx, &self.cache);
                             files.push((dot, format!("{}.dot", guild_name)));
                         }
@@ -162,7 +165,7 @@ impl EventHandler for Handler {
 
                         new_message
                             .channel_id
-                            .send_files(&ctx, files, |m| m.content("Files attached!"))
+                            .send_files(&ctx, files, |m| m)
                             .unwrap();
                     }
                     Command::Unknown(command) => {
