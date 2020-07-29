@@ -129,7 +129,7 @@ impl EventHandler for Handler {
                         new_message.channel_id.send_message(&ctx, |message| {
                             message.embed(|embed| {
                                 embed.title("Invite me!")
-                                    .url(format!("https://discord.com/api/oauth2/authorize?client_id={}&permissions=85056&scope=bot", our_id))
+                                    .url(format!("https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot", our_id))
                                     .description(format!("Click the link above to invite me to your server\n\nRequested By: {}#{:04}", new_message.author.name, new_message.author.discriminator))
                                     .color(Color::from_rgb(255, 255, 255))
                                     .thumbnail(/* TODO: Host our own copy. */ "https://i.imgur.com/CZFt69d.png")

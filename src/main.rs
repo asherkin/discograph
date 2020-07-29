@@ -23,10 +23,11 @@ fn main() {
     // RUST_LOG = reqwest=debug,tungstenite::protocol=trace/^(Received|response)
     env_logger::init();
 
-    // Permissions to request: 85056
+    // Permissions to request: 117824
     // * View Channels [required]
     // * Send Messages
     // * Embed Links
+    // * Attach Files
     // * Read Message History [required]
     // * Add Reactions
 

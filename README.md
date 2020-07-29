@@ -1,6 +1,6 @@
 # PieSpy Discord Bot
 
-Click [here](https://discord.com/api/oauth2/authorize?client_id=735929260073549854&permissions=85056&scope=bot) to invite the bot to your server.
+Click [here](https://discord.com/api/oauth2/authorize?client_id=735929260073549854&permissions=117824&scope=bot) to invite the bot to your server.
 
 ## License
 
