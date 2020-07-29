@@ -9,6 +9,8 @@ use crate::cache::Cache;
 use crate::inference::Interaction;
 use crate::parsing::Command;
 use crate::social::SocialGraph;
+use std::io::Write;
+use std::process::Stdio;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum BotEnvironment {
@@ -136,6 +138,58 @@ impl EventHandler for Handler {
                             })
                         }).unwrap();
                     }
+                    Command::Graph => {
+                        if self.environment != BotEnvironment::Production {
+                            return;
+                        }
+
+                        let guild_id = new_message.guild_id.unwrap();
+                        let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
+
+                        println!(
+                            "\"{}:{:04}\" requested a graph for \"{}\"",
+                            new_message.author.name, new_message.author.discriminator, guild_name,
+                        );
+
+                        new_message.channel_id.broadcast_typing(&ctx).unwrap();
+
+                        let dot = {
+                            let social = self.social.lock();
+                            let graph = social.build_guild_graph(guild_id).unwrap();
+                            graph.to_dot(&ctx, &self.cache)
+                        };
+
+                        let mut graphviz = std::process::Command::new("dot")
+                            .arg("-v")
+                            .arg("-Tpng")
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()
+                            .unwrap();
+
+                        {
+                            let stdin = graphviz.stdin.as_mut().unwrap();
+                            stdin.write_all(dot.as_bytes()).unwrap();
+                        }
+
+                        let output = graphviz.wait_with_output().unwrap();
+
+                        if !output.status.success() {
+                            new_message.react(&ctx, '\u{274C}').unwrap();
+                            return;
+                        }
+
+                        let output_name = format!("{}.png", guild_name);
+                        let png: &[u8] = output.stdout.as_ref();
+
+                        new_message
+                            .channel_id
+                            .send_files(&ctx, vec![(png, output_name.as_ref())], |m| {
+                                m.content(new_message.author.mention())
+                            })
+                            .unwrap();
+                    }
                     Command::CacheStats => {
                         new_message
                             .reply(&ctx, format!("{:?}", self.cache.get_stats()))
@@ -143,7 +197,7 @@ impl EventHandler for Handler {
                     }
                     Command::CacheDump => {
                         println!("{:#?}", self.cache);
-                        new_message.react(&ctx, "\u{2705}").unwrap();
+                        new_message.react(&ctx, '\u{2705}').unwrap();
                     }
                     Command::GraphDump => {
                         let mut files = Vec::new();

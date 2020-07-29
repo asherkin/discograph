@@ -33,7 +33,7 @@ fn main() {
 
     let token = get_optional_env("DISCORD_TOKEN").expect("missing discord bot token");
 
-    let data_dir = get_optional_env("DATA_DIR").map(|value| PathBuf::from(value));
+    let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
 
     let environment = get_optional_env("BOT_ENV").map_or(BotEnvironment::Development, |value| {
         match value.as_ref() {

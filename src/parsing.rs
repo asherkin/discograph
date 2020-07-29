@@ -3,6 +3,7 @@ use serenity::model::id::UserId;
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Invite,
+    Graph,
     CacheStats,
     CacheDump,
     GraphDump, // TODO: Let this take a GuildId.
@@ -13,6 +14,7 @@ impl Command {
     pub fn new_from_message(our_id: UserId, message: &str) -> Option<Command> {
         match internal::direct_mention_command(message, our_id.0) {
             Ok((_, "invite")) => Some(Command::Invite),
+            Ok((_, "graph")) => Some(Command::Graph),
             Ok((_, "cache stats")) => Some(Command::CacheStats),
             Ok((_, "cache dump")) => Some(Command::CacheDump),
             Ok((_, "graph dump")) => Some(Command::GraphDump),
