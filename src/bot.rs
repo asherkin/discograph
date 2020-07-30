@@ -1,16 +1,16 @@
+use serenity::builder::CreateMessage;
 use serenity::model::prelude::*;
 use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
-use serenity::utils::Color;
 
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 
 use crate::cache::Cache;
 use crate::inference::Interaction;
 use crate::parsing::Command;
 use crate::social::SocialGraph;
-use std::io::Write;
-use std::process::Stdio;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum BotEnvironment {
@@ -20,7 +20,7 @@ pub enum BotEnvironment {
 
 pub struct Handler {
     environment: BotEnvironment,
-    id: RwLock<Option<UserId>>,
+    user: RwLock<Option<CurrentUser>>,
     cache: Cache,
     social: Mutex<SocialGraph>,
 }
@@ -29,13 +29,13 @@ impl Handler {
     pub fn new(data_dir: Option<PathBuf>, environment: BotEnvironment) -> Self {
         Handler {
             environment,
-            id: RwLock::new(None),
+            user: RwLock::new(None),
             cache: Cache::new(),
             social: Mutex::new(SocialGraph::new(data_dir)),
         }
     }
 
-    pub fn process_interaction(&self, ctx: &Context, interaction: Interaction) {
+    fn process_interaction(&self, ctx: &Context, interaction: Interaction) {
         println!("{}", interaction.to_string(&ctx, &self.cache));
 
         let mut social = self.social.lock();
@@ -47,12 +47,46 @@ impl Handler {
 
         social.apply(&interaction, &changes);
     }
+
+    fn add_help_embed(&self, reply_to: &Message, message: &mut CreateMessage) {
+        let (our_id, our_name) = {
+            let info = self.user.read();
+            let info = info.as_ref().unwrap();
+            (info.id, info.name.clone())
+        };
+
+        // TODO
+        let graph_url = format!("https://google.com/search?q={}", reply_to.guild_id.unwrap());
+        let link_help_line = format!(
+            "` link  `\u{2000}Get a link to the [online interactive graph]({}).",
+            graph_url,
+        );
+
+        let invite_url = format!(
+            "https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot",
+            our_id,
+        );
+
+        message.embed(|embed| {
+            embed.description(format!("I'm a Discord Bot that infers relationships between users and draws pretty graphs.\nI'll only respond to messages that directly mention me, like `@{} help`.", our_name))
+                .field("Commands", vec![
+                    "` help  `\u{2000}This message.",
+                    &link_help_line,
+                    "` graph `\u{2000}Get a preview-quality graph image.",
+                ].join("\n"), false)
+                .field("Want graphs for your guild?", format!("[Click here]({}) to invite the bot to join your server.", invite_url), false)
+                .footer(|footer| {
+                    footer.text(format!("Sent in response to a command from {}#{:04}", reply_to.author.name, reply_to.author.discriminator))
+                })
+        });
+    }
 }
 
 // noinspection RsSortImplTraitMembers
 impl EventHandler for Handler {
     fn ready(&self, ctx: Context, data: Ready) {
-        self.id.write().replace(data.user.id);
+        ctx.set_activity(Activity::watching(&format!("| @{} help", data.user.name)));
+        self.user.write().replace(data.user);
 
         // TODO: Send a message to all instances of ourself for coordination.
         //       This needs to come from configuration - and needs a lot of work.
@@ -60,11 +94,6 @@ impl EventHandler for Handler {
         //       production bots and do 0-downtime deploys between them (with a shared DB),
         //       and run development versions without having them all respond to commands.
         // ChannelId(735953391687303260).say(&ctx, "Good morning!").unwrap();
-
-        ctx.set_activity(Activity::watching(&format!(
-            "you: @{} invite",
-            data.user.name
-        )));
     }
 
     fn guild_create(&self, _ctx: Context, guild: Guild) {
@@ -114,7 +143,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let our_id = self.id.read().unwrap();
+        let our_id = self.user.read().as_ref().unwrap().id;
         if new_message.author.id == our_id {
             return;
         }
@@ -123,22 +152,20 @@ impl EventHandler for Handler {
         if new_message.mentions_user_id(our_id) {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
-                    Command::Invite => {
+                    Command::Help => {
                         if self.environment != BotEnvironment::Production {
                             return;
                         }
 
-                        new_message.channel_id.send_message(&ctx, |message| {
-                            message.embed(|embed| {
-                                embed.title("Invite me!")
-                                    .url(format!("https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot", our_id))
-                                    .description(format!("Click the link above to invite me to your server\n\nRequested By: {}#{:04}", new_message.author.name, new_message.author.discriminator))
-                                    .color(Color::from_rgb(255, 255, 255))
-                                    .thumbnail(/* TODO: Host our own copy. */ "https://i.imgur.com/CZFt69d.png")
+                        new_message
+                            .channel_id
+                            .send_message(&ctx, |message| {
+                                self.add_help_embed(&new_message, message);
+                                message
                             })
-                        }).unwrap();
+                            .unwrap();
                     }
-                    Command::Graph => {
+                    Command::Link | Command::Graph => {
                         if self.environment != BotEnvironment::Production {
                             return;
                         }
@@ -190,16 +217,12 @@ impl EventHandler for Handler {
                             })
                             .unwrap();
                     }
-                    Command::CacheStats => {
+                    Command::Stats => {
                         new_message
                             .reply(&ctx, format!("{:?}", self.cache.get_stats()))
                             .unwrap();
                     }
-                    Command::CacheDump => {
-                        println!("{:#?}", self.cache);
-                        new_message.react(&ctx, '\u{2705}').unwrap();
-                    }
-                    Command::GraphDump => {
+                    Command::Dump => {
                         let mut files = Vec::new();
                         let social = self.social.lock();
                         for &guild_id in social.get_all_guild_ids() {
@@ -228,7 +251,12 @@ impl EventHandler for Handler {
                         }
 
                         new_message
-                            .reply(&ctx, format!("Unknown command: {}", command))
+                            .channel_id
+                            .send_message(&ctx, |message| {
+                                message.content(format!("Unknown command: {}", command));
+                                self.add_help_embed(&new_message, message);
+                                message
+                            })
                             .unwrap();
                     }
                 };
@@ -254,7 +282,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let our_id = self.id.read().unwrap();
+        let our_id = self.user.read().as_ref().unwrap().id;
         if add_reaction.user_id == our_id {
             return;
         }

@@ -2,22 +2,24 @@ use serenity::model::id::UserId;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
-    Invite,
+    Help,
+    Link,
     Graph,
-    CacheStats,
-    CacheDump,
-    GraphDump, // TODO: Let this take a GuildId.
+    Stats,
+    Dump, // TODO: Let this take a GuildId.
     Unknown(String),
 }
 
 impl Command {
     pub fn new_from_message(our_id: UserId, message: &str) -> Option<Command> {
         match internal::direct_mention_command(message, our_id.0) {
-            Ok((_, "invite")) => Some(Command::Invite),
+            Ok((_, "help")) => Some(Command::Help),
+            Ok((_, "about")) => Some(Command::Help),
+            Ok((_, "invite")) => Some(Command::Help),
+            Ok((_, "link")) => Some(Command::Link),
             Ok((_, "graph")) => Some(Command::Graph),
-            Ok((_, "cache stats")) => Some(Command::CacheStats),
-            Ok((_, "cache dump")) => Some(Command::CacheDump),
-            Ok((_, "graph dump")) => Some(Command::GraphDump),
+            Ok((_, "stats")) => Some(Command::Stats),
+            Ok((_, "dump")) => Some(Command::Dump),
             Ok((_, command)) => Some(Command::Unknown(command.to_string())),
             Err(_) => None,
         }
@@ -46,20 +48,14 @@ mod tests {
     fn basic() {
         let id = UserId(735929260073549854);
         let input = "<@!735929260073549854> cache stats";
-        assert_eq!(
-            Command::new_from_message(id, input),
-            Some(Command::CacheStats)
-        );
+        assert_eq!(Command::new_from_message(id, input), Some(Command::Stats));
     }
 
     #[test]
     fn quoted() {
         let id = UserId(735929260073549854);
         let input = "> hello\n<@!735929260073549854> cache stats";
-        assert_eq!(
-            Command::new_from_message(id, input),
-            Some(Command::CacheStats)
-        );
+        assert_eq!(Command::new_from_message(id, input), Some(Command::Stats));
     }
 
     #[test]

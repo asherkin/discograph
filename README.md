@@ -24,5 +24,3 @@ dual licensed as above, without any additional terms or conditions.
 ## Attribution
 
 Inspired by the original [PieSpy](http://www.jibble.org/piespy/) IRC bot.
-
-Invite icon made by [Freepik](https://www.flaticon.com/authors/freepik) from [www.flaticon.com](https://www.flaticon.com/).
