@@ -1,4 +1,6 @@
-# PieSpy Discord Bot
+# DiscoGraph
+
+A Discord Bot that infers relationships between users and draws pretty graphs.
 
 Click [here](https://discord.com/api/oauth2/authorize?client_id=735929260073549854&permissions=117824&scope=bot) to invite the bot to your server.
 
@@ -23,4 +25,4 @@ dual licensed as above, without any additional terms or conditions.
 
 Inspired by the original [PieSpy](http://www.jibble.org/piespy/) IRC bot.
 
-Invite icon made by [Freepik](https://www.flaticon.com/authors/freepik) and [pixelmeetup](https://www.flaticon.com/authors/pixelmeetup) from [www.flaticon.com](https://www.flaticon.com/).
+Invite icon made by [Freepik](https://www.flaticon.com/authors/freepik) from [www.flaticon.com](https://www.flaticon.com/).

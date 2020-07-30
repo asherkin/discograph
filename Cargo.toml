@@ -1,5 +1,5 @@
 [package]
-name = "piespy-rs"
+name = "discograph"
 version = "0.1.0"
 authors = ["Asher Baker <asherkin@limetech.io>"]
 license = "MIT OR Apache-2.0"
