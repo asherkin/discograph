@@ -55,12 +55,17 @@ impl Handler {
             (info.id, info.name.clone())
         };
 
-        // TODO
-        let graph_url = format!("https://google.com/search?q={}", reply_to.guild_id.unwrap());
-        let link_help_line = format!(
-            "` link  `\u{2000}Get a link to the [online interactive graph]({}).",
-            graph_url,
-        );
+        let graph_link_text = "online interactive graph";
+        let graph_link = reply_to
+            .guild_id
+            .map_or(graph_link_text.to_string(), |guild_id| {
+                // TODO
+                format!(
+                    "[{}](https://google.com/search?q={})",
+                    graph_link_text, guild_id,
+                )
+            });
+        let link_help_line = format!("` link  `\u{2000}Get a link to the {}.", graph_link,);
 
         let invite_url = format!(
             "https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot",
@@ -273,7 +278,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let interaction = Interaction::new_from_message(&new_message);
+        let interaction = Interaction::new_from_message(&new_message).unwrap();
         self.process_interaction(&ctx, interaction);
     }
 
@@ -302,7 +307,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let interaction = Interaction::new_from_reaction(&add_reaction, &message_info);
+        let interaction = Interaction::new_from_reaction(&add_reaction, &message_info).unwrap();
         self.process_interaction(&ctx, interaction);
     }
 }

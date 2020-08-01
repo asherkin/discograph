@@ -1,10 +1,11 @@
+use anyhow::{Context as ErrorContext, Result};
 use serenity::client::Context;
 use serenity::model::prelude::*;
 
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
-use crate::cache::{Cache, CachedMessage, CachedUser};
+use crate::cache::{Cache, CachedMessage};
 use crate::parsing::parse_direct_mention;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -25,68 +26,83 @@ pub struct Interaction {
 }
 
 impl Interaction {
-    pub fn new_from_message(message: &Message) -> Self {
+    pub fn new_from_message(message: &Message) -> Result<Self> {
+        let guild_id = message
+            .guild_id
+            .context("tried to create an interaction from a message not sent to a guild")?;
+
         let direct_mention = parse_direct_mention(&message.content);
 
         let user_mentions = message
             .mentions
             .iter()
             .map(|u| u.id)
-            .filter(|u| Some(*u) != direct_mention)
+            .filter(|&u| Some(u) != direct_mention)
             .collect::<Vec<UserId>>();
 
-        Interaction {
+        Ok(Interaction {
             what: InteractionType::Message,
             when: Instant::now(),
-            guild: message.guild_id.unwrap(),
+            guild: guild_id,
             channel: message.channel_id,
             source: message.author.id,
             target: direct_mention,
             other_targets: user_mentions,
-        }
+        })
     }
 
-    pub fn new_from_reaction(reaction: &Reaction, target_message: &CachedMessage) -> Self {
-        Interaction {
+    pub fn new_from_reaction(reaction: &Reaction, target_message: &CachedMessage) -> Result<Self> {
+        let guild_id = reaction
+            .guild_id
+            .context("tried to create an interaction from a reaction not sent to a guild")?;
+
+        Ok(Interaction {
             what: InteractionType::Reaction,
             when: Instant::now(),
-            guild: reaction.guild_id.unwrap(),
+            guild: guild_id,
             channel: reaction.channel_id,
             source: reaction.user_id,
             target: Some(target_message.author_id),
             other_targets: Vec::new(),
-        }
+        })
     }
 
     pub fn to_string(&self, ctx: &Context, cache: &Cache) -> String {
-        let user_to_display_name = |user: CachedUser, guild_id: GuildId, user_id: UserId| {
-            format!(
-                "\"{}\" ({}#{:04})",
-                cache
-                    .get_member(ctx, guild_id, user_id)
-                    .unwrap()
-                    .nick
-                    .unwrap_or_else(|| user.name.clone()),
-                user.name,
-                user.discriminator
-            )
+        let get_user_display_name = |user_id: UserId| {
+            cache
+                .get_user(&ctx, user_id)
+                .map(|user| {
+                    format!(
+                        "\"{}\" ({}#{:04})",
+                        cache
+                            .get_member(ctx, self.guild, user_id)
+                            .ok()
+                            .and_then(|member| member.nick)
+                            .unwrap_or_else(|| user.name.clone()),
+                        user.name,
+                        user.discriminator,
+                    )
+                })
+                .unwrap_or_else(|_| format!("<unknown user {}>", user_id))
         };
 
-        let source_name = cache
-            .get_user(&ctx, self.source)
-            .map(|user| user_to_display_name(user, self.guild, self.source))
-            .unwrap();
+        let source_name = get_user_display_name(self.source);
 
         let target_names = (self.target.iter())
             .chain(self.other_targets.iter())
-            .map(|user_id| (*user_id, cache.get_user(&ctx, *user_id).unwrap()))
-            .map(|(user_id, user)| user_to_display_name(user, self.guild, user_id))
+            .map(|&user_id| get_user_display_name(user_id))
             .collect::<Vec<String>>()
             .join(", ");
 
-        let channel_name = format!("#{}", cache.get_channel(&ctx, self.channel).unwrap().name);
+        let channel_name = cache
+            .get_channel(&ctx, self.channel)
+            .map(|channel| format!("#{}", channel.name))
+            .unwrap_or_else(|_| format!("<unknown channel {}>", self.channel));
 
-        let guild_name = cache.get_guild(&ctx, self.guild).unwrap().name;
+        let guild_name = cache
+            .get_guild(&ctx, self.guild)
+            .map(|guild| format!("#{}", guild.name))
+            .unwrap_or_else(|_| format!("<unknown guild {}>", self.channel));
 
         match self.what {
             InteractionType::Message => format!(
