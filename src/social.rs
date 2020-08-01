@@ -316,8 +316,8 @@ impl SocialGraph {
     }
 
     // TODO: Temporary hack for debug command.
-    pub fn get_all_guild_ids(&self) -> Vec<&GuildId> {
-        self.graph.keys().collect()
+    pub fn get_all_guild_ids(&self) -> Vec<GuildId> {
+        self.graph.keys().copied().collect()
     }
 
     pub(crate) fn get_graph(

@@ -185,11 +185,12 @@ impl EventHandler for Handler {
 
                         new_message.channel_id.broadcast_typing(&ctx).unwrap();
 
-                        let dot = {
+                        let graph = {
                             let social = self.social.lock();
-                            let graph = social.build_guild_graph(guild_id).unwrap();
-                            graph.to_dot(&ctx, &self.cache)
+                            social.build_guild_graph(guild_id).unwrap()
                         };
+
+                        let dot = graph.to_dot(&ctx, &self.cache);
 
                         let mut graphviz = std::process::Command::new("dot")
                             .arg("-v")
@@ -228,15 +229,23 @@ impl EventHandler for Handler {
                             .unwrap();
                     }
                     Command::Dump => {
+                        let all_guild_ids = {
+                            let social = self.social.lock();
+                            social.get_all_guild_ids()
+                        };
+
                         let mut files = Vec::new();
-                        let social = self.social.lock();
-                        for &guild_id in social.get_all_guild_ids() {
+                        for guild_id in all_guild_ids {
                             new_message.channel_id.broadcast_typing(&ctx).unwrap();
                             println!("building guild graph for {}", guild_id);
 
-                            let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
-                            let graph = social.build_guild_graph(guild_id).unwrap();
+                            let graph = {
+                                let social = self.social.lock();
+                                social.build_guild_graph(guild_id).unwrap()
+                            };
+
                             let dot = graph.to_dot(&ctx, &self.cache);
+                            let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
                             files.push((dot, format!("{}.dot", guild_name)));
                         }
 
