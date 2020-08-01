@@ -112,7 +112,7 @@ pub enum RelationshipChangeReason {
     MessageBinarySequence,
 }
 
-pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.0001;
+pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.02;
 
 impl RelationshipChangeReason {
     pub fn get_change_strength(&self) -> RelationshipStrength {

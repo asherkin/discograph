@@ -79,7 +79,7 @@ impl UserRelationshipGraphMap {
         // Remove any edges that have a weight under the threshold and build a list of unique user IDs.
         let mut user_ids = HashSet::new();
         undirected_edges.retain(|&[source, target], weight| {
-            if *weight > 0.4 {
+            if *weight > 1.0 {
                 user_ids.insert(source);
                 user_ids.insert(target);
 
