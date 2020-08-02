@@ -116,13 +116,14 @@ impl UserRelationshipGraphMap {
         undirected_edges
             .retain(|[source, target], _| names.contains_key(source) && names.contains_key(target));
 
-        let mut lines = Vec::with_capacity(6 + names.len() + undirected_edges.len() + 1);
+        let mut lines = Vec::with_capacity(7 + names.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
         lines.push(String::from("    K = \"0.05\""));
         lines.push(String::from("    splines = \"true\""));
         lines.push(String::from("    overlap = \"30:true\""));
+        lines.push(String::from("    node [ fontname = \"Noto Sans Display, Noto Emoji\" ]"));
         lines.push(String::from("    edge [ fontsize = \"0\" ]"));
 
         for (user_id, name) in names {
