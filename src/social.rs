@@ -59,7 +59,7 @@ impl UserRelationshipGraphMap {
         }
     }
 
-    pub fn to_dot(&self, ctx: &Context, cache: &Cache) -> String {
+    pub fn to_dot(&self, ctx: &Context, cache: &Cache, guild_id: GuildId) -> String {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
         for (&(source, target), new_weight) in &self.0 {
@@ -90,9 +90,9 @@ impl UserRelationshipGraphMap {
             }
         });
 
-        // Get the username for each user ID, ignoring failed lookups or bots.
-        // TODO: This can be *very* slow if the user isn't in the cache.
-        let usernames: HashMap<UserId, String> = user_ids
+        // Get the display name for each user ID, ignoring failed lookups or bots.
+        // TODO: This can be *very* slow if the user isn't in the cache..
+        let names: HashMap<UserId, String> = user_ids
             .iter()
             .filter_map(|&user_id| {
                 let user = cache.get_user(&ctx, user_id).ok()?;
@@ -100,16 +100,23 @@ impl UserRelationshipGraphMap {
                     return None;
                 }
 
-                Some((user_id, user.name))
+                let name = cache
+                    .get_member(&ctx, guild_id, user_id)
+                    .ok()
+                    .and_then(|member| member.nick)
+                    .unwrap_or(user.name);
+
+                Some((user_id, name))
             })
             .collect();
 
         // Filter any edges that were to bots or we couldn't lookup.
-        undirected_edges.retain(|[source, target], _| {
-            usernames.contains_key(source) && usernames.contains_key(target)
-        });
+        // TODO: This can leave us with disconnected users that were only
+        //       connected to another user by an edge we're removing here.
+        undirected_edges
+            .retain(|[source, target], _| names.contains_key(source) && names.contains_key(target));
 
-        let mut lines = Vec::with_capacity(6 + usernames.len() + undirected_edges.len() + 1);
+        let mut lines = Vec::with_capacity(6 + names.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
@@ -118,7 +125,7 @@ impl UserRelationshipGraphMap {
         lines.push(String::from("    overlap = \"30:true\""));
         lines.push(String::from("    edge [ fontsize = \"0\" ]"));
 
-        for (user_id, name) in usernames {
+        for (user_id, name) in names {
             lines.push(format!(
                 "    {} [ label = \"{}\" ]",
                 user_id,

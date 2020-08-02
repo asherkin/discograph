@@ -128,6 +128,8 @@ pub enum RelationshipChangeReason {
     MessageBinarySequence,
 }
 
+// TODO: I think this needs to be based on the total number of nodes in the graph.
+//       AlliedModders seems to be decaying a bit quick, while Together C & C++ is not quite there.
 pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.02;
 
 impl RelationshipChangeReason {
