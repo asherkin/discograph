@@ -1,9 +1,11 @@
+use log::info;
 use lru::LruCache;
 use serenity::http::Http;
 use serenity::model::prelude::*;
 use serenity::prelude::{Mutex, SerenityError};
 use serenity::utils::Color;
 use serenity::Result as SerenityResult;
+
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -216,11 +218,14 @@ impl Cache {
 
         match cached_user {
             Some(cached_user) => Ok(cached_user),
-            None => http.as_ref().get_user(user_id.into()).map(|user| {
-                self.put_user(&user);
+            None => {
+                info!("user {} not in cache, fetching", user_id);
+                http.as_ref().get_user(user_id.into()).map(|user| {
+                    self.put_user(&user);
 
-                CachedUser::from(&user)
-            }),
+                    CachedUser::from(&user)
+                })
+            }
         }
     }
 
@@ -257,11 +262,14 @@ impl Cache {
 
         match cached_guild {
             Some(cached_guild) => Ok(cached_guild),
-            None => http.as_ref().get_guild(guild_id.into()).map(|guild| {
-                self.put_guild(&guild);
+            None => {
+                info!("guild {} not in cache, fetching", guild_id);
+                http.as_ref().get_guild(guild_id.into()).map(|guild| {
+                    self.put_guild(&guild);
 
-                CachedGuild::from(&guild)
-            }),
+                    CachedGuild::from(&guild)
+                })
+            }
         }
     }
 
@@ -285,23 +293,25 @@ impl Cache {
 
         match cached_role {
             Some(cached_role) => Ok(cached_role),
-            None => http
-                .as_ref()
-                .get_guild_roles(guild_id.into())
-                .map(|roles| {
-                    for role in &roles {
-                        self.put_role(role);
-                    }
+            None => {
+                info!("role {} not in cache, fetching", role_id);
+                http.as_ref()
+                    .get_guild_roles(guild_id.into())
+                    .map(|roles| {
+                        for role in &roles {
+                            self.put_role(role);
+                        }
 
-                    // TODO: Re-using serenity's errors here is probably not sane.
-                    roles
-                        .iter()
-                        .find(|role| role.id == role_id)
-                        .map(CachedRole::from)
-                        .ok_or(SerenityError::Model(
-                            serenity::model::error::Error::RoleNotFound,
-                        ))
-                })?,
+                        // TODO: Re-using serenity's errors here is probably not sane.
+                        roles
+                            .iter()
+                            .find(|role| role.id == role_id)
+                            .map(CachedRole::from)
+                            .ok_or(SerenityError::Model(
+                                serenity::model::error::Error::RoleNotFound,
+                            ))
+                    })?
+            }
         }
     }
 
@@ -336,14 +346,19 @@ impl Cache {
 
         match cached_member {
             Some(cached_member) => Ok(cached_member),
-            None => http
-                .as_ref()
-                .get_member(guild_id.into(), user_id.into())
-                .map(|member| {
-                    self.put_full_member(&member);
+            None => {
+                info!(
+                    "member {} for guild {} not in cache, fetching",
+                    user_id, guild_id
+                );
+                http.as_ref()
+                    .get_member(guild_id.into(), user_id.into())
+                    .map(|member| {
+                        self.put_full_member(&member);
 
-                    CachedMember::from(&member)
-                }),
+                        CachedMember::from(&member)
+                    })
+            }
         }
     }
 
@@ -364,16 +379,19 @@ impl Cache {
 
         match cached_channel {
             Some(cached_channel) => Ok(cached_channel),
-            None => http.as_ref().get_channel(channel_id.into()).map(|channel| {
-                let channel = channel.guild().expect("not a guild channel");
-                let channel = channel.read();
+            None => {
+                info!("channel {} not in cache, fetching", channel_id);
+                http.as_ref().get_channel(channel_id.into()).map(|channel| {
+                    let channel = channel.guild().expect("not a guild channel");
+                    let channel = channel.read();
 
-                if channel.kind == ChannelType::Text {
-                    self.put_channel(&*channel);
-                }
+                    if channel.kind == ChannelType::Text {
+                        self.put_channel(&*channel);
+                    }
 
-                CachedChannel::from(&*channel)
-            }),
+                    CachedChannel::from(&*channel)
+                })
+            }
         }
     }
 
@@ -410,14 +428,16 @@ impl Cache {
 
         match cached_message {
             Some(cached_message) => Ok(cached_message),
-            None => http
-                .as_ref()
-                .get_message(channel_id.into(), message_id.into())
-                .map(|message| {
-                    self.put_message(&message);
+            None => {
+                info!("message {} not in cache, fetching", message_id);
+                http.as_ref()
+                    .get_message(channel_id.into(), message_id.into())
+                    .map(|message| {
+                        self.put_message(&message);
 
-                    CachedMessage::from(&message)
-                }),
+                        CachedMessage::from(&message)
+                    })
+            }
         }
     }
 }

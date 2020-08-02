@@ -1,3 +1,4 @@
+use log::info;
 use serenity::builder::CreateMessage;
 use serenity::model::prelude::*;
 use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
@@ -36,13 +37,13 @@ impl Handler {
     }
 
     fn process_interaction(&self, ctx: &Context, interaction: Interaction) {
-        println!("{}", interaction.to_string(&ctx, &self.cache));
+        info!("{}", interaction.to_string(&ctx, &self.cache));
 
         let mut social = self.social.lock();
 
         let changes = social.infer(&interaction);
         for change in &changes {
-            println!("-> {:?}", change);
+            info!("-> {:?}", change);
         }
 
         social.apply(&interaction, &changes);
@@ -178,7 +179,7 @@ impl EventHandler for Handler {
                         let guild_id = new_message.guild_id.unwrap();
                         let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
 
-                        println!(
+                        info!(
                             "\"{}:{:04}\" requested a graph for \"{}\"",
                             new_message.author.name, new_message.author.discriminator, guild_name,
                         );
@@ -237,7 +238,7 @@ impl EventHandler for Handler {
                         let mut files = Vec::new();
                         for guild_id in all_guild_ids {
                             new_message.channel_id.broadcast_typing(&ctx).unwrap();
-                            println!("building guild graph for {}", guild_id);
+                            info!("building guild graph for {}", guild_id);
 
                             let graph = {
                                 let social = self.social.lock();

@@ -1,3 +1,4 @@
+use log::error;
 use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serenity::client::Context;
@@ -282,7 +283,7 @@ impl SocialGraph {
             // TODO: Maybe we should use a proper database for the backing store? for all of this?
             let data_path = Self::graph_data_file_name(data_dir, guild_id, channel_id);
             if let Err(err) = graph.save_to_path(&data_path) {
-                eprintln!(
+                error!(
                     "failed to store on-disk data for ({}, {}): {}",
                     interaction.guild, interaction.channel, err,
                 );
@@ -338,7 +339,7 @@ impl SocialGraph {
                         Ok(graph) => Some(graph),
                         Err(err) if err.kind() == IoErrorKind::NotFound => None,
                         Err(err) => {
-                            eprintln!(
+                            error!(
                                 "failed to load on-disk data for ({}, {}): {}",
                                 guild_id, channel_id, err,
                             );
