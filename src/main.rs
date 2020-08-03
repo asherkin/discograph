@@ -11,6 +11,7 @@ use serenity::client::Client;
 
 use std::env;
 use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::bot::BotEnvironment;
 
@@ -46,11 +47,24 @@ fn main() -> Result<()> {
         }
     });
 
+    let notification = Arc::new((Mutex::new(false), Condvar::new()));
+
     let mut client = Client::new_with_extras(&token, |extras| {
         // TODO: Replace `guild_subscriptions` with `intents` once it is released in a serenity version.
         extras
-            .event_handler(bot::Handler::new(data_dir, environment))
+            .event_handler(bot::Handler::new(
+                data_dir,
+                environment,
+                notification.clone(),
+            ))
             .guild_subscriptions(false)
+    })?;
+
+    let shard_manager = client.shard_manager.clone();
+    ctrlc::set_handler(move || {
+        let mut shard_manager = shard_manager.lock();
+
+        shard_manager.shutdown_all();
     })?;
 
     let gateway_info = client.cache_and_http.http.get_bot_gateway()?;
@@ -61,5 +75,19 @@ fn main() -> Result<()> {
     info!("starting {} shards", gateway_info.shards);
     client.start_shards(gateway_info.shards)?;
 
+    info!("shards have apparently finished");
+
+    // The Handler instance is dropped elsewhere when the shards are shutdown,
+    // but waiting on the threadpool doesn't block on all the Drop implementations
+    // running. This condvar (which is signalled by a Drop impl on a field in
+    // Handler seems to be the only reliable way to wait for all the other Handler
+    // fields to be dropped - which is important once we introduce SQLite.
+    let (lock, cvar) = &*notification;
+    let mut finished = lock.lock().unwrap();
+    while !*finished {
+        finished = cvar.wait(finished).unwrap();
+    }
+
+    info!("cleanup finished, exiting main");
     Ok(())
 }

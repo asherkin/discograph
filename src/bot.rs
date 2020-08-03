@@ -6,7 +6,7 @@ use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex as StdMutex};
 
 use crate::cache::Cache;
 use crate::inference::Interaction;
@@ -19,20 +19,37 @@ pub enum BotEnvironment {
     Production,
 }
 
+struct DropNotifier(Arc<(StdMutex<bool>, Condvar)>);
+
+impl Drop for DropNotifier {
+    fn drop(&mut self) {
+        let (lock, cvar) = &*self.0;
+        let mut finished = lock.lock().unwrap();
+        *finished = true;
+        cvar.notify_one();
+    }
+}
+
 pub struct Handler {
     environment: BotEnvironment,
     user: RwLock<Option<CurrentUser>>,
     cache: Cache,
     social: Mutex<SocialGraph>,
+    _notification: DropNotifier,
 }
 
 impl Handler {
-    pub fn new(data_dir: Option<PathBuf>, environment: BotEnvironment) -> Self {
+    pub fn new(
+        data_dir: Option<PathBuf>,
+        environment: BotEnvironment,
+        notification: Arc<(StdMutex<bool>, Condvar)>,
+    ) -> Self {
         Handler {
             environment,
             user: RwLock::new(None),
             cache: Cache::new(),
             social: Mutex::new(SocialGraph::new(data_dir)),
+            _notification: DropNotifier(notification),
         }
     }
 
