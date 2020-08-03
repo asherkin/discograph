@@ -47,6 +47,7 @@ fn main() -> Result<()> {
         }
     });
 
+    #[allow(clippy::mutex_atomic)]
     let notification = Arc::new((Mutex::new(false), Condvar::new()));
 
     let mut client = Client::new_with_extras(&token, |extras| {
