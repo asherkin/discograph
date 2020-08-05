@@ -3,6 +3,7 @@ use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serenity::client::Context;
 use serenity::model::prelude::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -15,6 +16,28 @@ use crate::cache::Cache;
 use crate::inference::{
     InferenceState, Interaction, RelationshipChange, RelationshipStrength, RELATIONSHIP_DECAY,
 };
+
+fn get_label(mut name: String) -> String {
+    let label_length = 9;
+    let ellipsis = "...";
+    let ellipsis_length = ellipsis.len();
+
+    let mut name_iter = name.grapheme_indices(true);
+    let key_graphemes = (
+        name_iter.nth(label_length - ellipsis_length),
+        name_iter.nth(ellipsis_length - 1),
+    );
+
+    match key_graphemes {
+        (_, None) => name,
+        (Some((pos, _)), Some(_)) => {
+            name.truncate(pos);
+            name.push_str(ellipsis);
+            name
+        }
+        (None, Some(_)) => unreachable!(),
+    }
+}
 
 #[derive(Debug)]
 pub struct UserRelationshipGraphMap(HashMap<(UserId, UserId), RelationshipStrength>);
@@ -80,7 +103,7 @@ impl UserRelationshipGraphMap {
         // Remove any edges that have a weight under the threshold and build a list of unique user IDs.
         let mut user_ids = HashSet::new();
         undirected_edges.retain(|&[source, target], weight| {
-            if *weight > 1.0 {
+            if *weight > 0.4 {
                 user_ids.insert(source);
                 user_ids.insert(target);
 
@@ -116,30 +139,30 @@ impl UserRelationshipGraphMap {
         undirected_edges
             .retain(|[source, target], _| names.contains_key(source) && names.contains_key(target));
 
-        let mut lines = Vec::with_capacity(7 + names.len() + undirected_edges.len() + 1);
+        let mut lines = Vec::with_capacity(6 + names.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
-        lines.push(String::from("    K = \"0.05\""));
+        lines.push(String::from("    K = \"0.1\""));
         lines.push(String::from("    splines = \"true\""));
         lines.push(String::from("    overlap = \"30:true\""));
         lines.push(String::from(
             "    node [ fontname = \"Noto Sans Display, Noto Emoji\" ]",
         ));
-        lines.push(String::from("    edge [ fontsize = \"0\" ]"));
 
         for (user_id, name) in names {
             lines.push(format!(
                 "    {} [ label = \"{}\" ]",
                 user_id,
-                name.replace("\"", "\\\""),
+                get_label(name).replace("\"", "\\\""),
             ));
         }
 
         for (key, weight) in undirected_edges {
+            let width = 1.0 + weight.log10();
             lines.push(format!(
-                "    {} -- {} [ label = \"{:.2}\" ]",
-                key[0], key[1], weight,
+                "    {} -- {} [ weight = \"{}\", penwidth = \"{}\" ]",
+                key[0], key[1], weight, width,
             ));
         }
 
