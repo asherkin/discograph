@@ -103,7 +103,7 @@ impl UserRelationshipGraphMap {
         // Remove any edges that have a weight under the threshold and build a list of unique user IDs.
         let mut user_ids = HashSet::new();
         undirected_edges.retain(|&[source, target], weight| {
-            if *weight > 0.4 {
+            if *weight >= 1.0 {
                 user_ids.insert(source);
                 user_ids.insert(target);
 
@@ -133,13 +133,23 @@ impl UserRelationshipGraphMap {
             })
             .collect();
 
-        // Filter any edges that were to bots or we couldn't lookup.
-        // TODO: This can leave us with disconnected users that were only
-        //       connected to another user by an edge we're removing here.
-        undirected_edges
-            .retain(|[source, target], _| names.contains_key(source) && names.contains_key(target));
+        // Filter any edges that were to bots or we couldn't lookup and sum per-user weights.
+        let mut user_weights: HashMap<UserId, RelationshipStrength> = HashMap::new();
+        undirected_edges.retain(|[source, target], weight| {
+            let retain = names.contains_key(source) && names.contains_key(target);
 
-        let mut lines = Vec::with_capacity(6 + names.len() + undirected_edges.len() + 1);
+            if retain {
+                let source_weight = user_weights.entry(*source).or_default();
+                *source_weight += *weight;
+
+                let target_weight = user_weights.entry(*target).or_default();
+                *target_weight += *weight;
+            }
+
+            retain
+        });
+
+        let mut lines = Vec::with_capacity(6 + user_weights.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
@@ -150,11 +160,14 @@ impl UserRelationshipGraphMap {
             "    node [ fontname = \"Noto Sans Display, Noto Emoji\" ]",
         ));
 
-        for (user_id, name) in names {
+        for (user_id, weight) in &user_weights {
+            let name = names.get(user_id).unwrap().clone();
+            let width = 1.0 + weight.log10();
             lines.push(format!(
-                "    {} [ label = \"{}\" ]",
+                "    {} [ label = \"{}\", penwidth = \"{}\" ]",
                 user_id,
                 get_label(name).replace("\"", "\\\""),
+                width,
             ));
         }
 
