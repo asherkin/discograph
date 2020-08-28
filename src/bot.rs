@@ -208,7 +208,7 @@ impl EventHandler for Handler {
                             social.build_guild_graph(guild_id).unwrap()
                         };
 
-                        let dot = graph.to_dot(&ctx, &self.cache, guild_id);
+                        let dot = graph.to_dot(&ctx, &self.cache, guild_id, &new_message.author);
 
                         let mut graphviz = std::process::Command::new("dot")
                             .arg("-v")
@@ -262,7 +262,7 @@ impl EventHandler for Handler {
                                 social.build_guild_graph(guild_id).unwrap()
                             };
 
-                            let dot = graph.to_dot(&ctx, &self.cache, guild_id);
+                            let dot = graph.to_dot(&ctx, &self.cache, guild_id, &new_message.author);
                             let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
                             files.push((dot, format!("{}.dot", guild_name)));
                         }

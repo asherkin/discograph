@@ -82,7 +82,7 @@ impl UserRelationshipGraphMap {
         }
     }
 
-    pub fn to_dot(&self, ctx: &Context, cache: &Cache, guild_id: GuildId) -> String {
+    pub fn to_dot(&self, ctx: &Context, cache: &Cache, guild_id: GuildId, author : &User) -> String {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
         for (&(source, target), new_weight) in &self.0 {
@@ -163,11 +163,18 @@ impl UserRelationshipGraphMap {
         for (user_id, weight) in &user_weights {
             let name = names.get(user_id).unwrap().clone();
             let width = 1.0 + weight.log10();
+
+            let mut color = "black";
+            if *user_id == author.id {
+                color = "darkgoldenrod1";
+            }
+
             lines.push(format!(
-                "    {} [ label = \"{}\", penwidth = \"{}\" ]",
+                "    {} [ label = \"{}\", penwidth = \"{}\", color={}]",
                 user_id,
                 get_label(name).replace("\"", "\\\""),
                 width,
+                color,
             ));
         }
 
