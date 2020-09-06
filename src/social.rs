@@ -3,6 +3,7 @@ use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serenity::client::Context;
 use serenity::model::prelude::*;
+use serenity::utils::Color;
 use unicode_segmentation::UnicodeSegmentation;
 
 use std::collections::{HashMap, HashSet};
@@ -12,11 +13,13 @@ use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 
-use crate::cache::Cache;
+use crate::cache::{Cache, CachedRole};
 use crate::inference::{
     InferenceState, Interaction, RelationshipChange, RelationshipStrength, RELATIONSHIP_DECAY,
 };
 
+// TODO: This doesn't handle counting wide characters very well,
+//       Probably want to pull in the unicode-width crate for that.
 fn get_label(mut name: String) -> String {
     let label_length = 9;
     let ellipsis = "...";
@@ -82,7 +85,13 @@ impl UserRelationshipGraphMap {
         }
     }
 
-    pub fn to_dot(&self, ctx: &Context, cache: &Cache, guild_id: GuildId) -> String {
+    pub fn to_dot(
+        &self,
+        ctx: &Context,
+        cache: &Cache,
+        guild_id: GuildId,
+        requesting_user: Option<&User>,
+    ) -> String {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
         for (&(source, target), new_weight) in &self.0 {
@@ -113,9 +122,28 @@ impl UserRelationshipGraphMap {
             }
         });
 
+        // Get the ordered list of color-affecting roles for the guild.
+        let roles = cache.get_guild(&ctx, guild_id).ok().map(|guild| {
+            let mut roles: Vec<(RoleId, CachedRole)> = guild
+                .roles
+                .iter()
+                .filter_map(|&role_id| {
+                    cache
+                        .get_role(&ctx, guild_id, role_id)
+                        .ok()
+                        .filter(|role| role.color.0 != 0)
+                        .map(|role| (role_id, role))
+                })
+                .collect();
+
+            roles.sort_unstable_by_key(|(_, role)| std::cmp::Reverse(role.position));
+
+            roles
+        });
+
         // Get the display name for each user ID, ignoring failed lookups or bots.
         // TODO: This can be *very* slow if the user isn't in the cache..
-        let names: HashMap<UserId, String> = user_ids
+        let names_and_colors: HashMap<UserId, (String, Option<Color>)> = user_ids
             .iter()
             .filter_map(|&user_id| {
                 let user = cache.get_user(&ctx, user_id).ok()?;
@@ -123,20 +151,33 @@ impl UserRelationshipGraphMap {
                     return None;
                 }
 
-                let name = cache
-                    .get_member(&ctx, guild_id, user_id)
-                    .ok()
-                    .and_then(|member| member.nick)
-                    .unwrap_or(user.name);
+                let member = cache.get_member(&ctx, guild_id, user_id);
+                let name_and_color = match member {
+                    Ok(member) => {
+                        let color = roles.as_ref().and_then(|roles| {
+                            let member_roles: HashSet<RoleId> =
+                                member.roles.iter().cloned().collect();
 
-                Some((user_id, name))
+                            roles
+                                .iter()
+                                .find(|role| member_roles.contains(&role.0))
+                                .map(|role| role.1.color)
+                        });
+
+                        (member.nick.unwrap_or(user.name), color)
+                    }
+                    Err(_) => (user.name, None),
+                };
+
+                Some((user_id, name_and_color))
             })
             .collect();
 
         // Filter any edges that were to bots or we couldn't lookup and sum per-user weights.
         let mut user_weights: HashMap<UserId, RelationshipStrength> = HashMap::new();
         undirected_edges.retain(|[source, target], weight| {
-            let retain = names.contains_key(source) && names.contains_key(target);
+            let retain =
+                names_and_colors.contains_key(source) && names_and_colors.contains_key(target);
 
             if retain {
                 let source_weight = user_weights.entry(*source).or_default();
@@ -149,25 +190,73 @@ impl UserRelationshipGraphMap {
             retain
         });
 
-        let mut lines = Vec::with_capacity(6 + user_weights.len() + undirected_edges.len() + 1);
+        let fontname = "Noto Sans Display, Noto Emoji";
+
+        let mut lines = Vec::with_capacity(11 + user_weights.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
         lines.push(String::from("    layout = \"fdp\""));
         lines.push(String::from("    K = \"0.1\""));
         lines.push(String::from("    splines = \"true\""));
         lines.push(String::from("    overlap = \"30:true\""));
-        lines.push(String::from(
-            "    node [ fontname = \"Noto Sans Display, Noto Emoji\" ]",
-        ));
+        lines.push(String::from("    outputorder = \"edgesfirst\""));
+
+        if let Some(user) = requesting_user {
+            // TODO: Add a timestamp and the guild / channel info.
+            let label = format!(
+                "Generated for {}#{:04} by DiscoGraph",
+                user.name, user.discriminator
+            );
+            lines.push(format!("    label = \"{}\"", label));
+            lines.push(String::from("    labelloc = \"bottom\""));
+            lines.push(String::from("    labeljust = \"left\""));
+            lines.push(format!("    fontname = \"{}\"", fontname));
+        }
+
+        lines.push(format!("    node [ fontname = \"{}\" ]", fontname));
 
         for (user_id, weight) in &user_weights {
-            let name = names.get(user_id).unwrap().clone();
+            let (name, role_color) = names_and_colors.get(user_id).unwrap().clone();
             let width = 1.0 + weight.log10();
+
+            const BLACK: Color = Color::from_rgb(0, 0, 0);
+            const WHITE: Color = Color::from_rgb(255, 255, 255);
+
+            // TODO: Calculate this from their role color.
+            let mut color = BLACK;
+            let mut fillcolor = WHITE;
+            let mut fontcolor = BLACK;
+
+            if let Some(role_color) = role_color {
+                color = role_color;
+            }
+
+            if let Some(user) = requesting_user {
+                // Invert the colors if it is the requesting user.
+                if *user_id == user.id {
+                    fillcolor = color;
+
+                    // Select text color based on fill contrast.
+                    fontcolor = if (fillcolor.r() as f32 * 0.299)
+                        + (fillcolor.g() as f32 * 0.587)
+                        + (fillcolor.b() as f32 * 0.144)
+                        > 149.0
+                    {
+                        BLACK
+                    } else {
+                        WHITE
+                    };
+                }
+            }
+
             lines.push(format!(
-                "    {} [ label = \"{}\", penwidth = \"{}\" ]",
+                "    {} [ label = \"{}\", penwidth = \"{}\", style = \"filled\", color = \"#{:06X}\", fillcolor = \"#{:06X}\", fontcolor = \"#{:06X}\" ]",
                 user_id,
                 get_label(name).replace("\"", "\\\""),
                 width,
+                color.0,
+                fillcolor.0,
+                fontcolor.0,
             ));
         }
 

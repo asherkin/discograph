@@ -197,7 +197,7 @@ impl EventHandler for Handler {
                         let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
 
                         info!(
-                            "\"{}:{:04}\" requested a graph for \"{}\"",
+                            "\"{}#{:04}\" requested a graph for \"{}\"",
                             new_message.author.name, new_message.author.discriminator, guild_name,
                         );
 
@@ -208,7 +208,8 @@ impl EventHandler for Handler {
                             social.build_guild_graph(guild_id).unwrap()
                         };
 
-                        let dot = graph.to_dot(&ctx, &self.cache, guild_id);
+                        let dot =
+                            graph.to_dot(&ctx, &self.cache, guild_id, Some(&new_message.author));
 
                         let mut graphviz = std::process::Command::new("dot")
                             .arg("-v")
@@ -262,7 +263,7 @@ impl EventHandler for Handler {
                                 social.build_guild_graph(guild_id).unwrap()
                             };
 
-                            let dot = graph.to_dot(&ctx, &self.cache, guild_id);
+                            let dot = graph.to_dot(&ctx, &self.cache, guild_id, None);
                             let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
                             files.push((dot, format!("{}.dot", guild_name)));
                         }
