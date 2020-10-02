@@ -203,9 +203,11 @@ impl UserRelationshipGraphMap {
 
         if let Some(user) = requesting_user {
             // TODO: Add a timestamp and the guild / channel info.
+            let safe_name = user.name.replace("\\", "\\\\").replace("\"", "\\\"");
+
             let label = format!(
                 "Generated for {}#{:04} by DiscoGraph",
-                user.name, user.discriminator
+                safe_name, user.discriminator
             );
             lines.push(format!("    label = \"{}\"", label));
             lines.push(String::from("    labelloc = \"bottom\""));
@@ -219,10 +221,19 @@ impl UserRelationshipGraphMap {
             let (name, role_color) = names_and_colors.get(user_id).unwrap().clone();
             let width = 1.0 + weight.log10();
 
+            // TODO: This could be a lot more efficient.
+            let mut label = get_label(name)
+                .replace("&", "&amp;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#x27;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\\", "\\\\");
+
             const BLACK: Color = Color::from_rgb(0, 0, 0);
             const WHITE: Color = Color::from_rgb(255, 255, 255);
 
-            // TODO: Calculate this from their role color.
+            let mut peripheries = 1;
             let mut color = BLACK;
             let mut fillcolor = WHITE;
             let mut fontcolor = BLACK;
@@ -234,13 +245,18 @@ impl UserRelationshipGraphMap {
             if let Some(user) = requesting_user {
                 // Invert the colors if it is the requesting user.
                 if *user_id == user.id {
+                    // Make the text bold.
+                    label = format!("<B>{}</B>", label);
+
+                    peripheries = 2;
+
                     fillcolor = color;
 
                     // Select text color based on fill contrast.
                     fontcolor = if (fillcolor.r() as f32 * 0.299)
                         + (fillcolor.g() as f32 * 0.587)
                         + (fillcolor.b() as f32 * 0.144)
-                        > 149.0
+                        > 186.0
                     {
                         BLACK
                     } else {
@@ -250,10 +266,11 @@ impl UserRelationshipGraphMap {
             }
 
             lines.push(format!(
-                "    {} [ label = \"{}\", penwidth = \"{}\", style = \"filled\", color = \"#{:06X}\", fillcolor = \"#{:06X}\", fontcolor = \"#{:06X}\" ]",
+                "    {} [ label = <{}>, penwidth = \"{}\", style = \"filled\", peripheries = \"{}\", color = \"#{:06X}\", fillcolor = \"#{:06X}\", fontcolor = \"#{:06X}\" ]",
                 user_id,
-                get_label(name).replace("\"", "\\\""),
+                label,
                 width,
+                peripheries,
                 color.0,
                 fillcolor.0,
                 fontcolor.0,
