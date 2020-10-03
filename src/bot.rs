@@ -2,6 +2,7 @@ use log::info;
 use serenity::builder::CreateMessage;
 use serenity::model::prelude::*;
 use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
+use serenity::Result as SerenityResult;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -102,6 +103,125 @@ impl Handler {
                     footer.text(format!("Sent in response to a command from {}#{:04}", reply_to.author.name, reply_to.author.discriminator))
                 })
         });
+    }
+
+    // Based on the logic in Guild._user_permissions_in
+    // TODO: This should probably be in Cache or somewhere new, not here?
+    fn calculate_permissions_for_user(
+        &self,
+        ctx: &Context,
+        guild_id: GuildId,
+        user_id: UserId,
+        channel_id: ChannelId,
+    ) -> SerenityResult<Permissions> {
+        let guild = self.cache.get_guild(&ctx, guild_id)?;
+
+        // The owner has all permissions in all cases.
+        if user_id == guild.owner_id {
+            return Ok(Permissions::all());
+        }
+
+        // Start by retrieving the @everyone role's permissions.
+        let everyone = self.cache.get_role(&ctx, guild_id, RoleId(guild_id.0))?;
+
+        // Create a base set of permissions, starting with `@everyone`s.
+        let mut permissions = everyone.permissions;
+
+        let member = match self.cache.get_member(&ctx, guild_id, user_id) {
+            Ok(member) => member,
+            // TODO: This is from Serenity, but doesn't seem right - surely the channel overrides need accounting for?
+            Err(_) => return Ok(everyone.permissions),
+        };
+
+        for &role_id in &member.roles {
+            // TODO: Should this be less fatal?
+            let role = self.cache.get_role(&ctx, guild_id, role_id)?;
+
+            permissions |= role.permissions;
+        }
+
+        // Administrators have all permissions in any channel.
+        if permissions.contains(Permissions::ADMINISTRATOR) {
+            return Ok(Permissions::all());
+        }
+
+        let channel = self.cache.get_channel(&ctx, channel_id)?;
+
+        // If this is a text channel, then throw out voice permissions.
+        if channel.kind == ChannelType::Text {
+            permissions &= !(Permissions::CONNECT
+                | Permissions::SPEAK
+                | Permissions::MUTE_MEMBERS
+                | Permissions::DEAFEN_MEMBERS
+                | Permissions::MOVE_MEMBERS
+                | Permissions::USE_VAD);
+        }
+
+        // Apply the permission overwrites for the channel for each of the
+        // overwrites that - first - applies to the member's roles, and then
+        // the member itself.
+        //
+        // First apply the denied permission overwrites for each, then apply
+        // the allowed.
+
+        let mut data = Vec::with_capacity(member.roles.len());
+
+        // Roles
+        for overwrite in &channel.permission_overwrites {
+            if let PermissionOverwriteType::Role(role_id) = overwrite.kind {
+                if role_id.0 != guild_id.0 && !member.roles.contains(&role_id) {
+                    continue;
+                }
+
+                // TODO: Should this be less fatal?
+                let role = self.cache.get_role(&ctx, guild_id, role_id)?;
+
+                data.push((role.position, overwrite.deny, overwrite.allow));
+            }
+        }
+
+        data.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for overwrite in data {
+            permissions = (permissions & !overwrite.1) | overwrite.2;
+        }
+
+        // Member
+        for overwrite in &channel.permission_overwrites {
+            if PermissionOverwriteType::Member(user_id) != overwrite.kind {
+                continue;
+            }
+
+            permissions = (permissions & !overwrite.deny) | overwrite.allow;
+        }
+
+        // The default channel is always readable.
+        if channel_id.0 == guild_id.0 {
+            permissions |= Permissions::READ_MESSAGES;
+        }
+
+        // No SEND_MESSAGES => no message-sending-related actions
+        // If the member does not have the `SEND_MESSAGES` permission, then
+        // throw out message-able permissions.
+        if !permissions.contains(Permissions::SEND_MESSAGES) {
+            permissions &= !(Permissions::SEND_TTS_MESSAGES
+                | Permissions::MENTION_EVERYONE
+                | Permissions::EMBED_LINKS
+                | Permissions::ATTACH_FILES);
+        }
+
+        // If the permission does not have the `READ_MESSAGES` permission, then
+        // throw out actionable permissions.
+        if !permissions.contains(Permissions::READ_MESSAGES) {
+            permissions &= Permissions::KICK_MEMBERS
+                | Permissions::BAN_MEMBERS
+                | Permissions::ADMINISTRATOR
+                | Permissions::MANAGE_GUILD
+                | Permissions::CHANGE_NICKNAME
+                | Permissions::MANAGE_NICKNAMES;
+        }
+
+        Ok(permissions)
     }
 }
 
@@ -208,6 +328,24 @@ impl EventHandler for Handler {
 
                             match request_channel {
                                 Some(channel_id) => {
+                                    // Do not allow requesting a graph for a channel the user can't see.
+                                    let permissions = self
+                                        .calculate_permissions_for_user(&ctx, guild_id, new_message.author.id, channel_id)
+                                        .unwrap_or_else(|err| {
+                                            info!(
+                                                "Failed to calculate permissions for user {} and channel {} in {}: {:?}",
+                                                new_message.author.id, channel_id, guild_id, err,
+                                            );
+
+                                            Permissions::empty()
+                                        });
+
+                                    if !permissions.read_messages() {
+                                        new_message.reply(&ctx, "You can't request a graph of a channel you can't read").unwrap();
+
+                                        return;
+                                    }
+
                                     social.get_channel_graph(guild_id, channel_id).cloned()
                                 }
                                 None => social.build_guild_graph(guild_id),

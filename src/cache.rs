@@ -32,6 +32,7 @@ pub struct CachedGuild {
     pub name: String,
     pub icon: Option<String>,
     pub roles: Vec<RoleId>,
+    pub owner_id: UserId,
 }
 
 impl From<&PartialGuild> for CachedGuild {
@@ -40,6 +41,7 @@ impl From<&PartialGuild> for CachedGuild {
             name: guild.name.clone(),
             icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
+            owner_id: guild.owner_id,
         }
     }
 }
@@ -50,6 +52,7 @@ impl From<&Guild> for CachedGuild {
             name: guild.name.clone(),
             icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
+            owner_id: guild.owner_id,
         }
     }
 }
@@ -59,6 +62,7 @@ pub struct CachedRole {
     pub name: String,
     pub color: Color,
     pub position: i64,
+    pub permissions: Permissions,
 }
 
 impl From<&Role> for CachedRole {
@@ -67,6 +71,7 @@ impl From<&Role> for CachedRole {
             name: role.name.clone(),
             color: role.colour,
             position: role.position,
+            permissions: role.permissions,
         }
     }
 }
@@ -98,12 +103,16 @@ impl From<&Member> for CachedMember {
 #[derive(Debug, Clone)]
 pub struct CachedChannel {
     pub name: String,
+    pub kind: ChannelType,
+    pub permission_overwrites: Vec<PermissionOverwrite>,
 }
 
 impl From<&GuildChannel> for CachedChannel {
     fn from(channel: &GuildChannel) -> Self {
         CachedChannel {
             name: channel.name.clone(),
+            kind: channel.kind,
+            permission_overwrites: channel.permission_overwrites.clone(),
         }
     }
 }
@@ -278,8 +287,6 @@ impl Cache {
         cache.put(role.id, CachedRole::from(role));
     }
 
-    // TODO: This'll be needed for rendering.
-    #[allow(dead_code)]
     pub fn get_role(
         &self,
         http: impl AsRef<Http>,
