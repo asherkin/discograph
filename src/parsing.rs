@@ -1,10 +1,10 @@
-use serenity::model::id::UserId;
+use serenity::model::id::{ChannelId, UserId};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Command {
     Help,
     Link,
-    Graph,
+    Graph(Option<ChannelId>),
     Stats,
     Dump, // TODO: Let this take a GuildId.
     Unknown(String),
@@ -17,7 +17,11 @@ impl Command {
             Ok((_, "about")) => Some(Command::Help),
             Ok((_, "invite")) => Some(Command::Help),
             Ok((_, "link")) => Some(Command::Link),
-            Ok((_, "graph")) => Some(Command::Graph),
+            Ok((args, "graph")) => {
+                let channel =
+                    internal::channel_mention(args).map_or(None, |(_, id)| Some(ChannelId(id)));
+                Some(Command::Graph(channel))
+            }
             Ok((_, "stats")) => Some(Command::Stats),
             Ok((_, "dump")) => Some(Command::Dump),
             Ok((_, command)) => Some(Command::Unknown(command.to_string())),
@@ -47,14 +51,14 @@ mod tests {
     #[test]
     fn basic() {
         let id = UserId(735929260073549854);
-        let input = "<@!735929260073549854> cache stats";
+        let input = "<@!735929260073549854> stats";
         assert_eq!(Command::new_from_message(id, input), Some(Command::Stats));
     }
 
     #[test]
     fn quoted() {
         let id = UserId(735929260073549854);
-        let input = "> hello\n<@!735929260073549854> cache stats";
+        let input = "> hello\n<@!735929260073549854> stats";
         assert_eq!(Command::new_from_message(id, input), Some(Command::Stats));
     }
 
@@ -67,11 +71,21 @@ mod tests {
             Some(Command::Unknown("foobar".to_string()))
         );
     }
+
+    #[test]
+    fn graph_channel() {
+        let id = UserId(735929260073549854);
+        let input = "<@!735929260073549854> graph <#335290997317697536>";
+        assert_eq!(
+            Command::new_from_message(id, input),
+            Some(Command::Graph(Some(ChannelId(335290997317697536))))
+        );
+    }
 }
 
 pub(super) mod internal {
     use nom::bytes::complete::tag;
-    use nom::character::complete::{digit1, line_ending, not_line_ending, space0};
+    use nom::character::complete::{alphanumeric0, digit1, line_ending, not_line_ending, space0};
     use nom::combinator::{all_consuming, map_res, opt, verify};
     use nom::multi::many0;
     use nom::sequence::tuple;
@@ -92,6 +106,14 @@ pub(super) mod internal {
         Ok((remaining, id))
     }
 
+    pub fn channel_mention(input: &str) -> IResult<&str, u64> {
+        let mention_start = tag("<#");
+        let mention_end = tag(">");
+
+        let (remaining, (_, id, _)) = tuple((mention_start, parse_id, mention_end))(input)?;
+        Ok((remaining, id))
+    }
+
     fn consume_quote(input: &str) -> IResult<&str, ()> {
         let quote_start = tag("> ");
 
@@ -105,9 +127,11 @@ pub(super) mod internal {
     }
 
     pub fn direct_mention_command(input: &str, wanted_id: u64) -> IResult<&str, &str> {
-        let (remaining, (_, _, _, command)) = all_consuming(tuple((
+        let (_, (_, _, _, command, _, remaining)) = all_consuming(tuple((
             consume_quote,
             verify(user_mention, |id| *id == wanted_id),
+            space0,
+            alphanumeric0,
             space0,
             not_line_ending,
         )))(input)?;
@@ -138,6 +162,14 @@ pub(super) mod internal {
             let id = 735929260073549854u64;
             let result = super::direct_mention_command("<@!735929260073549854> cache", id);
             assert_eq!(result, Ok(("", "cache")));
+        }
+
+        #[test]
+        fn simple_command_args() {
+            let id = 735929260073549854u64;
+            let result =
+                super::direct_mention_command("<@!735929260073549854> cache status check", id);
+            assert_eq!(result, Ok(("status check", "cache")));
         }
 
         #[test]

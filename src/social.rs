@@ -42,7 +42,7 @@ fn get_label(mut name: String) -> String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UserRelationshipGraphMap(HashMap<(UserId, UserId), RelationshipStrength>);
 
 impl UserRelationshipGraphMap {
@@ -91,7 +91,7 @@ impl UserRelationshipGraphMap {
         cache: &Cache,
         guild_id: GuildId,
         requesting_user: Option<&User>,
-    ) -> String {
+    ) -> Result<String, String> {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
         for (&(source, target), new_weight) in &self.0 {
@@ -190,6 +190,10 @@ impl UserRelationshipGraphMap {
             retain
         });
 
+        if user_weights.is_empty() {
+            return Err("Not enough users to create a graph".to_owned());
+        }
+
         let fontname = "Noto Sans Display, Noto Emoji";
 
         let mut lines = Vec::with_capacity(11 + user_weights.len() + undirected_edges.len() + 1);
@@ -287,7 +291,7 @@ impl UserRelationshipGraphMap {
 
         lines.push(String::from("}"));
 
-        lines.join("\n")
+        Ok(lines.join("\n"))
     }
 }
 

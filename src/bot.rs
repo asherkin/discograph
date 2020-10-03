@@ -73,17 +73,17 @@ impl Handler {
             (info.id, info.name.clone())
         };
 
-        let graph_link_text = "online interactive graph";
-        let graph_link = reply_to
-            .guild_id
-            .map_or(graph_link_text.to_string(), |guild_id| {
-                // TODO
-                format!(
-                    "[{}](https://google.com/search?q={})",
-                    graph_link_text, guild_id,
-                )
-            });
-        let link_help_line = format!("` link  `\u{2000}Get a link to the {}.", graph_link,);
+        // let graph_link_text = "online interactive graph";
+        // let graph_link = reply_to
+        //     .guild_id
+        //     .map_or(graph_link_text.to_string(), |guild_id| {
+        //         // TODO
+        //         format!(
+        //             "[{}](https://google.com/search?q={})",
+        //             graph_link_text, guild_id,
+        //         )
+        //     });
+        // let link_help_line = format!("` link  `\u{2000}Get a link to the {}.", graph_link,);
 
         let invite_url = format!(
             "https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot",
@@ -94,7 +94,7 @@ impl Handler {
             embed.description(format!("I'm a Discord Bot that infers relationships between users and draws pretty graphs.\nI'll only respond to messages that directly mention me, like `@{} help`.", our_name))
                 .field("Commands", vec![
                     "` help  `\u{2000}This message.",
-                    &link_help_line,
+                    // &link_help_line,
                     "` graph `\u{2000}Get a preview-quality graph image.",
                 ].join("\n"), false)
                 .field("Want graphs for your guild?", format!("[Click here]({}) to invite the bot to join your server.", invite_url), false)
@@ -175,7 +175,7 @@ impl EventHandler for Handler {
         if new_message.mentions_user_id(our_id) {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
-                    Command::Help => {
+                    Command::Link | Command::Help => {
                         if self.environment != BotEnvironment::Production {
                             return;
                         }
@@ -188,7 +188,7 @@ impl EventHandler for Handler {
                             })
                             .unwrap();
                     }
-                    Command::Link | Command::Graph => {
+                    Command::Graph(request_channel) => {
                         if self.environment != BotEnvironment::Production {
                             return;
                         }
@@ -205,11 +205,29 @@ impl EventHandler for Handler {
 
                         let graph = {
                             let social = self.social.lock();
-                            social.build_guild_graph(guild_id).unwrap()
+
+                            match request_channel {
+                                Some(channel_id) => {
+                                    social.get_channel_graph(guild_id, channel_id).cloned()
+                                }
+                                None => social.build_guild_graph(guild_id),
+                            }
+                            .unwrap()
                         };
 
-                        let dot =
-                            graph.to_dot(&ctx, &self.cache, guild_id, Some(&new_message.author));
+                        let dot = match graph.to_dot(
+                            &ctx,
+                            &self.cache,
+                            guild_id,
+                            Some(&new_message.author),
+                        ) {
+                            Ok(dot) => dot,
+                            Err(err) => {
+                                new_message.reply(&ctx, err).unwrap();
+
+                                return;
+                            }
+                        };
 
                         let mut graphviz = std::process::Command::new("dot")
                             .arg("-v")
@@ -263,9 +281,16 @@ impl EventHandler for Handler {
                                 social.build_guild_graph(guild_id).unwrap()
                             };
 
-                            let dot = graph.to_dot(&ctx, &self.cache, guild_id, None);
-                            let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
-                            files.push((dot, format!("{}.dot", guild_name)));
+                            match graph.to_dot(&ctx, &self.cache, guild_id, None) {
+                                Ok(dot) => {
+                                    let guild_name =
+                                        self.cache.get_guild(&ctx, guild_id).unwrap().name;
+                                    files.push((dot, format!("{}.dot", guild_name)));
+                                }
+                                Err(err) => {
+                                    info!("Failed to create graph: {}", err);
+                                }
+                            }
                         }
 
                         let files: Vec<(&[u8], &str)> = files
