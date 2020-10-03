@@ -489,16 +489,22 @@ impl EventHandler for Handler {
             add_reaction.member.as_ref().unwrap(),
         );
 
-        let message_info = self
+        match self
             .cache
             .get_message(&ctx, add_reaction.channel_id, add_reaction.message_id)
-            .unwrap();
+        {
+            Ok(message_info) => {
+                if message_info.kind != MessageType::Regular {
+                    return;
+                }
 
-        if message_info.kind != MessageType::Regular {
-            return;
+                let interaction =
+                    Interaction::new_from_reaction(&add_reaction, &message_info).unwrap();
+                self.process_interaction(&ctx, interaction);
+            }
+            Err(err) => {
+                info!("Failed to load message for reaction: {:?}", err);
+            }
         }
-
-        let interaction = Interaction::new_from_reaction(&add_reaction, &message_info).unwrap();
-        self.process_interaction(&ctx, interaction);
     }
 }
