@@ -436,10 +436,12 @@ impl EventHandler for Handler {
                             .map(|(contents, name)| (contents.as_bytes(), name.as_ref()))
                             .collect();
 
-                        new_message
-                            .channel_id
-                            .send_files(&ctx, files, |m| m)
-                            .unwrap();
+                        for to_send in files.chunks(10) {
+                            new_message
+                                .channel_id
+                                .send_files(&ctx, to_send.to_vec(), |m| m)
+                                .unwrap();
+                        }
                     }
                     Command::Unknown(command) => {
                         if self.environment != BotEnvironment::Production {
