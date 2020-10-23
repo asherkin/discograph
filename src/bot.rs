@@ -4,6 +4,7 @@ use serenity::model::prelude::*;
 use serenity::prelude::{Context, EventHandler, Mutex, RwLock};
 use serenity::Result as SerenityResult;
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -33,6 +34,7 @@ impl Drop for DropNotifier {
 
 pub struct Handler {
     environment: BotEnvironment,
+    owners: RwLock<HashSet<UserId>>,
     user: RwLock<Option<CurrentUser>>,
     cache: Cache,
     social: Mutex<SocialGraph>,
@@ -47,6 +49,7 @@ impl Handler {
     ) -> Self {
         Handler {
             environment,
+            owners: RwLock::new(HashSet::new()),
             user: RwLock::new(None),
             cache: Cache::new(),
             social: Mutex::new(SocialGraph::new(data_dir)),
@@ -231,12 +234,9 @@ impl EventHandler for Handler {
         ctx.set_activity(Activity::watching(&format!("| @{} help", data.user.name)));
         self.user.write().replace(data.user);
 
-        // TODO: Send a message to all instances of ourself for coordination.
-        //       This needs to come from configuration - and needs a lot of work.
-        //       It is probably worthwhile to do though as we'll be able to have a set of
-        //       production bots and do 0-downtime deploys between them (with a shared DB),
-        //       and run development versions without having them all respond to commands.
-        // ChannelId(735953391687303260).say(&ctx, "Good morning!").unwrap();
+        if let Ok(info) = ctx.http.get_current_application_info() {
+            self.owners.write().insert(info.owner.id);
+        }
     }
 
     fn guild_create(&self, _ctx: Context, guild: Guild) {
@@ -404,6 +404,14 @@ impl EventHandler for Handler {
                             .unwrap();
                     }
                     Command::Dump => {
+                        let is_owner = self.owners.read().contains(&new_message.author.id);
+                        if !is_owner {
+                            new_message
+                                .reply(&ctx, "You don't have permission to do that")
+                                .unwrap();
+                            return;
+                        }
+
                         let all_guild_ids = {
                             let social = self.social.lock();
                             social.get_all_guild_ids()
