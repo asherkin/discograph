@@ -16,6 +16,10 @@ serde = "1"
 serde_json = "1"
 unicode-segmentation = "1"
 
+[dependencies.rusqlite]
+version = "0.23"
+features = ["bundled"]
+
 [dependencies.serenity]
 git = "https://github.com/asherkin/serenity"
 branch = "piespy"

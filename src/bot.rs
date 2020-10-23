@@ -1,3 +1,4 @@
+use anyhow::Result;
 use log::info;
 use serenity::builder::CreateMessage;
 use serenity::model::prelude::*;
@@ -54,7 +55,7 @@ impl Handler {
         }
     }
 
-    fn process_interaction(&self, ctx: &Context, interaction: Interaction) {
+    fn process_interaction(&self, ctx: &Context, interaction: Interaction) -> Result<()> {
         info!("{}", interaction.to_string(&ctx, &self.cache));
 
         let mut social = self.social.lock();
@@ -64,7 +65,7 @@ impl Handler {
             info!("-> {:?}", change);
         }
 
-        social.apply(&interaction, &changes);
+        social.apply(&interaction, &changes)
     }
 
     fn add_help_embed(&self, reply_to: &Message, message: &mut CreateMessage) {
@@ -472,7 +473,7 @@ impl EventHandler for Handler {
         }
 
         let interaction = Interaction::new_from_message(&new_message).unwrap();
-        self.process_interaction(&ctx, interaction);
+        self.process_interaction(&ctx, interaction).unwrap();
     }
 
     fn reaction_add(&self, ctx: Context, add_reaction: Reaction) {
@@ -502,7 +503,7 @@ impl EventHandler for Handler {
 
                 let interaction =
                     Interaction::new_from_reaction(&add_reaction, &message_info).unwrap();
-                self.process_interaction(&ctx, interaction);
+                self.process_interaction(&ctx, interaction).unwrap();
             }
             Err(err) => {
                 info!("Failed to load message for reaction: {:?}", err);

@@ -1,4 +1,6 @@
+use anyhow::Result;
 use log::error;
+use rusqlite::{params, Connection};
 use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serenity::client::Context;
@@ -6,12 +8,14 @@ use serenity::model::prelude::*;
 use serenity::utils::Color;
 use unicode_segmentation::UnicodeSegmentation;
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::File;
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::cache::{Cache, CachedRole};
 use crate::inference::{
@@ -395,6 +399,7 @@ pub struct SocialGraph {
     data_dir: Option<PathBuf>,
     graph: HashMap<GuildId, HashMap<ChannelId, UserRelationshipGraphMap>>,
     state: HashMap<(GuildId, ChannelId), InferenceState>,
+    connections: HashMap<ChannelId, Connection>,
 }
 
 impl SocialGraph {
@@ -403,6 +408,7 @@ impl SocialGraph {
             data_dir,
             graph: HashMap::new(),
             state: HashMap::new(),
+            connections: HashMap::new(),
         }
     }
 
@@ -419,10 +425,58 @@ impl SocialGraph {
     }
 
     /// Apply a set of relationship changes to the graph.
-    pub fn apply(&mut self, interaction: &Interaction, changes: &[RelationshipChange]) {
+    pub fn apply(
+        &mut self,
+        interaction: &Interaction,
+        changes: &[RelationshipChange],
+    ) -> Result<()> {
         let data_dir = self.data_dir.clone();
         let guild_id = interaction.guild;
         let channel_id = interaction.channel;
+
+        // TODO: SQLite storage experiments.
+        if let Some(data_dir) = &data_dir {
+            let db = match self.connections.entry(channel_id) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let mut path = data_dir.clone();
+                    path.push(format!("{}_{}.sqlite3", guild_id, channel_id));
+
+                    let db = Connection::open(path)?;
+                    db.pragma_update(None, "journal_mode", &"WAL")?;
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS events (\
+                                 timestamp INTEGER NOT NULL,\
+                                 idx INTEGER NOT NULL,\
+                                 source BLOB NOT NULL,\
+                                 target BLOB NOT NULL,\
+                                 reason INTEGER NOT NULL,\
+                                 PRIMARY KEY (timestamp, idx)\
+                             ) WITHOUT ROWID",
+                        params![],
+                    )?;
+                    entry.insert(db)
+                }
+            };
+
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+
+            for (i, change) in changes.iter().enumerate() {
+                db.execute(
+                    "INSERT INTO events (timestamp, idx, source, target, reason) VALUES (?, ?, ?, ?, ?)",
+                    params![
+                        now,
+                        i as i64,
+                        change.source.0.to_be_bytes().as_ref(),
+                        change.target.0.to_be_bytes().as_ref(),
+                        change.reason,
+                    ],
+                )?;
+            }
+        }
 
         let graph = self.get_graph(guild_id, channel_id);
 
@@ -445,6 +499,8 @@ impl SocialGraph {
                 );
             }
         }
+
+        Ok(())
     }
 
     #[allow(dead_code)]

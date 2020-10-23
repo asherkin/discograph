@@ -7,6 +7,8 @@ use std::time::Instant;
 
 use crate::cache::{Cache, CachedMessage};
 use crate::parsing::parse_direct_mention;
+use rusqlite::types::{ToSqlOutput, Value};
+use rusqlite::ToSql;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum InteractionType {
@@ -119,13 +121,21 @@ impl Interaction {
 
 pub type RelationshipStrength = f32;
 
+/// These IDs are serialized and must not change.
+/// Add new entries to the end and do not reuse removed indexes.
 #[derive(Debug, Copy, Clone)]
 pub enum RelationshipChangeReason {
-    Reaction,
-    MessageDirectMention,
-    MessageIndirectMention,
-    MessageAdjacency,
-    MessageBinarySequence,
+    Reaction = 1,
+    MessageDirectMention = 2,
+    MessageIndirectMention = 3,
+    MessageAdjacency = 4,
+    MessageBinarySequence = 5,
+}
+
+impl ToSql for RelationshipChangeReason {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Owned(Value::Integer(*self as i64)))
+    }
 }
 
 // TODO: I think this needs to be based on the total number of nodes in the graph.
