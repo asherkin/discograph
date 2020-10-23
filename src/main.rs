@@ -13,8 +13,6 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::bot::BotEnvironment;
-
 fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
         Ok(value) => Some(value),
@@ -39,25 +37,13 @@ fn main() -> Result<()> {
 
     let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
 
-    let environment = get_optional_env("BOT_ENV").map_or(BotEnvironment::Development, |value| {
-        match value.as_ref() {
-            "production" => BotEnvironment::Production,
-            "development" => BotEnvironment::Development,
-            value => panic!(format!("unknown environment: {}", value)),
-        }
-    });
-
     #[allow(clippy::mutex_atomic)]
     let notification = Arc::new((Mutex::new(false), Condvar::new()));
 
     let mut client = Client::new_with_extras(&token, |extras| {
         // TODO: Replace `guild_subscriptions` with `intents` once it is released in a serenity version.
         extras
-            .event_handler(bot::Handler::new(
-                data_dir,
-                environment,
-                notification.clone(),
-            ))
+            .event_handler(bot::Handler::new(data_dir, notification.clone()))
             .guild_subscriptions(false)
     })?;
 

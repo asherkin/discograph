@@ -15,12 +15,6 @@ use crate::inference::Interaction;
 use crate::parsing::Command;
 use crate::social::SocialGraph;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum BotEnvironment {
-    Development,
-    Production,
-}
-
 struct DropNotifier(Arc<(StdMutex<bool>, Condvar)>);
 
 impl Drop for DropNotifier {
@@ -33,7 +27,6 @@ impl Drop for DropNotifier {
 }
 
 pub struct Handler {
-    environment: BotEnvironment,
     owners: RwLock<HashSet<UserId>>,
     user: RwLock<Option<CurrentUser>>,
     cache: Cache,
@@ -42,13 +35,8 @@ pub struct Handler {
 }
 
 impl Handler {
-    pub fn new(
-        data_dir: Option<PathBuf>,
-        environment: BotEnvironment,
-        notification: Arc<(StdMutex<bool>, Condvar)>,
-    ) -> Self {
+    pub fn new(data_dir: Option<PathBuf>, notification: Arc<(StdMutex<bool>, Condvar)>) -> Self {
         Handler {
-            environment,
             owners: RwLock::new(HashSet::new()),
             user: RwLock::new(None),
             cache: Cache::new(),
@@ -296,10 +284,6 @@ impl EventHandler for Handler {
             if let Some(command) = Command::new_from_message(our_id, &new_message.content) {
                 match command {
                     Command::Link | Command::Help => {
-                        if self.environment != BotEnvironment::Production {
-                            return;
-                        }
-
                         new_message
                             .channel_id
                             .send_message(&ctx, |message| {
@@ -309,10 +293,6 @@ impl EventHandler for Handler {
                             .unwrap();
                     }
                     Command::Graph(request_channel) => {
-                        if self.environment != BotEnvironment::Production {
-                            return;
-                        }
-
                         let guild_id = new_message.guild_id.unwrap();
                         let guild_name = self.cache.get_guild(&ctx, guild_id).unwrap().name;
 
@@ -452,10 +432,6 @@ impl EventHandler for Handler {
                         }
                     }
                     Command::Unknown(command) => {
-                        if self.environment != BotEnvironment::Production {
-                            return;
-                        }
-
                         new_message
                             .channel_id
                             .send_message(&ctx, |message| {
