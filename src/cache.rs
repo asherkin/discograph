@@ -191,7 +191,7 @@ pub struct CacheStats {
 impl Cache {
     pub fn new() -> Self {
         // TODO: Tune these cache sizes.
-        const CACHE_LIMIT: usize = 1000;
+        const CACHE_LIMIT: usize = 5000;
 
         Cache {
             users: Mutex::new(LruCache::new(CACHE_LIMIT)),
