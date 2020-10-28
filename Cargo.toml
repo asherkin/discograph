@@ -1,26 +1,20 @@
 [package]
 name = "discograph"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Asher Baker <asherkin@limetech.io>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [dependencies]
-anyhow = "1"
 ctrlc = "3"
-env_logger = "0.7"
-log = "0.4"
-lru = "0.5"
-nom = "5"
-serde = "1"
-serde_json = "1"
-unicode-segmentation = "1"
-
-[dependencies.serenity]
-git = "https://github.com/asherkin/serenity"
-branch = "piespy"
-default-features = false
-features = ["client", "gateway", "http", "model", "rustls_backend"]
-
-#[patch."https://github.com/asherkin/serenity"]
-#serenity = { path = "../serenity" }
+lru = "0.6"
+parking_lot = "0.11"
+anyhow = "1"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = "0.2"
+tokio = { version = "0.2", features = ["macros", "rt-core"] }
+twilight-command-parser = { branch = "trunk", git = "https://github.com/twilight-rs/twilight.git" }
+twilight-gateway = { branch = "trunk", git = "https://github.com/twilight-rs/twilight.git" }
+twilight-http = { branch = "trunk", git = "https://github.com/twilight-rs/twilight.git" }
+twilight-model = { branch = "trunk", git = "https://github.com/twilight-rs/twilight.git" }

@@ -1,17 +1,23 @@
-mod bot;
 mod cache;
-mod inference;
-mod parsing;
-mod social;
+mod commands;
+mod context;
 
-use anyhow::{Context, Result};
-use env_logger::Env;
-use log::info;
-use serenity::client::Client;
+use anyhow::{Context as AnyhowContext, Result};
+use tokio::stream::StreamExt;
+use tracing::{error, info};
+use twilight_gateway::{cluster::Cluster, Event};
+use twilight_http::{Client as HttpClient, Client};
+use twilight_model::gateway::presence::ActivityType;
+use twilight_model::gateway::Intents;
+use twilight_model::oauth::team::TeamMembershipState;
 
+use std::collections::HashSet;
 use std::env;
-use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+
+use cache::Cache;
+use context::Context;
+use twilight_model::id::UserId;
 
 fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
@@ -21,60 +27,115 @@ fn get_optional_env(key: &str) -> Option<String> {
     }
 }
 
-fn main() -> Result<()> {
-    // RUST_LOG = reqwest=debug,tungstenite::protocol=trace/^(Received|response)
-    env_logger::from_env(Env::default().default_filter_or("info")).try_init()?;
-
-    // Permissions to request: 117824
-    // * View Channels [required]
-    // * Send Messages
-    // * Embed Links
-    // * Attach Files
-    // * Read Message History [required]
-    // * Add Reactions
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize the tracing subscriber.
+    tracing_subscriber::fmt::init();
 
     let token = get_optional_env("DISCORD_TOKEN").context("missing discord bot token")?;
 
-    let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
+    // HTTP is separate from the gateway, so create a new client.
+    let http = HttpClient::new(&token);
 
-    #[allow(clippy::mutex_atomic)]
-    let notification = Arc::new((Mutex::new(false), Condvar::new()));
+    // Just block on these, it simplifies the startup logic.
+    let user = Arc::new(http.current_user().await?);
+    let owners = Arc::new(get_application_owners(&http).await?);
 
-    let mut client = Client::new_with_extras(&token, |extras| {
-        // TODO: Replace `guild_subscriptions` with `intents` once it is released in a serenity version.
-        extras
-            .event_handler(bot::Handler::new(data_dir, notification.clone()))
-            .guild_subscriptions(false)
-    })?;
+    let cache = Arc::new(Cache::new(http.clone()));
 
-    let shard_manager = client.shard_manager.clone();
+    // Configure gateway connection.
+    let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::GUILD_MESSAGE_REACTIONS;
+    let cluster = Cluster::builder(&token, intents).build().await?;
+
+    // Start all shards in the cluster in the background.
+    // This *must* be after any other awaits, otherwise we can lose events.
+    let cluster_spawn = cluster.clone();
+    tokio::spawn(async move {
+        cluster_spawn.up().await;
+    });
+
+    let cluster_down = cluster.clone();
     ctrlc::set_handler(move || {
-        let mut shard_manager = shard_manager.lock();
+        info!("ctrlc handler called");
 
-        shard_manager.shutdown_all();
+        cluster_down.down();
     })?;
 
-    let gateway_info = client.cache_and_http.http.get_bot_gateway()?;
+    let mut events = cluster.events();
 
-    info!("{:?}", gateway_info.session_start_limit);
+    // Process each event as they come in.
+    while let Some((shard_id, event)) = events.next().await {
+        // Drop these early just to clean up some logging for development.
+        if let Event::GatewayHeartbeatAck = event {
+            continue;
+        }
 
-    // We don't use `start_autosharded` so we can log the rate limit info.
-    info!("starting {} shards", gateway_info.shards);
-    client.start_shards(gateway_info.shards)?;
+        info!("received event: {:?}", event);
 
-    info!("shards have apparently finished");
+        // Update the cache with the event.
+        // Done before we spawn the tasks to ensure the cache is updated.
+        cache.update(&event);
 
-    // The Handler instance is dropped elsewhere when the shards are shutdown,
-    // but waiting on the threadpool doesn't block on all the Drop implementations
-    // running. This condvar (which is signalled by a Drop impl on a field in
-    // Handler seems to be the only reliable way to wait for all the other Handler
-    // fields to be dropped - which is important once we introduce SQLite.
-    let (lock, cvar) = &*notification;
-    let mut finished = lock.lock().unwrap();
-    while !*finished {
-        finished = cvar.wait(finished).unwrap();
+        let context = Context {
+            user: user.clone(),
+            owners: owners.clone(),
+            shard: cluster.shard(shard_id).unwrap(),
+            http: http.clone(),
+            cache: cache.clone(),
+        };
+
+        tokio::spawn(async move {
+            if let Err(error) = handle_event(&context, &event).await {
+                error!("error handling event {:?}: {:?}", event.kind(), error);
+            }
+        });
     }
 
-    info!("cleanup finished, exiting main");
+    info!("event stream ended, exiting");
+
+    Ok(())
+}
+
+async fn get_application_owners(http: &Client) -> Result<HashSet<UserId>> {
+    let info = http.current_user_application().await?;
+
+    let mut owners = HashSet::new();
+
+    if let Some(team) = &info.team {
+        for member in &team.members {
+            if member.membership_state == TeamMembershipState::Accepted {
+                owners.insert(member.user.id);
+            }
+        }
+    } else {
+        owners.insert(info.owner.id);
+    }
+
+    Ok(owners)
+}
+
+async fn handle_event(context: &Context, event: &Event) -> Result<()> {
+    // if let Event::GuildCreate(_) = event {
+    //     anyhow::bail!("test error");
+    // }
+
+    // if let Event::ShardConnected(_) = event {
+    //     panic!("test panic");
+    // }
+
+    if let Event::Ready(event) = event {
+        context
+            .set_activity(
+                ActivityType::Watching,
+                format!("| @{} help", event.user.name),
+            )
+            .await?;
+    }
+
+    if commands::handle_event(context, event).await? {
+        // If the command processor consumed it, don't do any more processing.
+        return Ok(());
+    }
+
     Ok(())
 }
