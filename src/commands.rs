@@ -23,11 +23,13 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
 
     info!("new message: {}", message.content);
 
+    // TODO: I think we want to switch back to our own command parsing.
     let mut config = CommandParserConfig::new();
     config.add_prefix(format!("<@{}>", context.user.id));
     config.add_prefix(format!("<@!{}>", context.user.id));
     config.add_command("help", false);
     config.add_command("graph", false);
+    config.add_command("stats", false);
 
     let parser = Parser::new(config);
     let command = match parser.parse(&message.content) {
@@ -40,6 +42,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
     match command {
         Command { name: "help", .. } => command_help(context, message).await?,
         Command { name: "graph", .. } => todo!(),
+        Command { name: "stats", .. } => command_stats(context, message).await?,
         _ => (),
     };
 
@@ -106,6 +109,20 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
         .http
         .create_message(message.channel_id)
         .embed(embed)?
+        .await?;
+
+    Ok(())
+}
+
+async fn command_stats(context: &Context, message: &Message) -> Result<()> {
+    context
+        .http
+        .create_message(message.channel_id)
+        .content(format!(
+            "<@{}> {:?}",
+            message.author.id,
+            context.cache.get_stats()
+        ))?
         .await?;
 
     Ok(())

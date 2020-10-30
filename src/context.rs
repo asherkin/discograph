@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use twilight_gateway::shard::CommandError;
 use twilight_gateway::Shard;
 use twilight_http::Client;
@@ -10,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::cache::Cache;
+use crate::social::graph::SocialGraph;
 
 #[derive(Clone)]
 pub struct Context {
@@ -18,6 +20,7 @@ pub struct Context {
     pub shard: Shard,
     pub http: Client,
     pub cache: Arc<Cache>,
+    pub social: Arc<Mutex<SocialGraph>>,
 }
 
 impl Context {

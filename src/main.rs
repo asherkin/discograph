@@ -1,23 +1,27 @@
 mod cache;
 mod commands;
 mod context;
+mod social;
 
 use anyhow::{Context as AnyhowContext, Result};
+use parking_lot::Mutex;
 use tokio::stream::StreamExt;
 use tracing::{error, info};
 use twilight_gateway::{cluster::Cluster, Event};
 use twilight_http::{Client as HttpClient, Client};
 use twilight_model::gateway::presence::ActivityType;
 use twilight_model::gateway::Intents;
+use twilight_model::id::UserId;
 use twilight_model::oauth::team::TeamMembershipState;
 
 use std::collections::HashSet;
 use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use cache::Cache;
-use context::Context;
-use twilight_model::id::UserId;
+use crate::cache::Cache;
+use crate::context::Context;
+use crate::social::graph::SocialGraph;
 
 fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
@@ -42,6 +46,9 @@ async fn main() -> Result<()> {
     let owners = Arc::new(get_application_owners(&http).await?);
 
     let cache = Arc::new(Cache::new(http.clone()));
+
+    let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
+    let social = Arc::new(Mutex::new(SocialGraph::new(data_dir)));
 
     // Configure gateway connection.
     let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::GUILD_MESSAGE_REACTIONS;
@@ -82,6 +89,7 @@ async fn main() -> Result<()> {
             shard: cluster.shard(shard_id).unwrap(),
             http: http.clone(),
             cache: cache.clone(),
+            social: social.clone(),
         };
 
         tokio::spawn(async move {
@@ -115,14 +123,6 @@ async fn get_application_owners(http: &Client) -> Result<HashSet<UserId>> {
 }
 
 async fn handle_event(context: &Context, event: &Event) -> Result<()> {
-    // if let Event::GuildCreate(_) = event {
-    //     anyhow::bail!("test error");
-    // }
-
-    // if let Event::ShardConnected(_) = event {
-    //     panic!("test panic");
-    // }
-
     if let Event::Ready(event) = event {
         context
             .set_activity(
@@ -136,6 +136,8 @@ async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         // If the command processor consumed it, don't do any more processing.
         return Ok(());
     }
+
+    social::handle_event(context, event).await?;
 
     Ok(())
 }

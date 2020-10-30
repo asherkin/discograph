@@ -1,11 +1,8 @@
-// TODO: Remove this once there are users.
-#![allow(dead_code)]
-
+use anyhow::{Context, Result};
 use lru::LruCache;
 use parking_lot::Mutex;
 use tracing::info;
 use twilight_http::Client;
-use twilight_http::Result as HttpResult;
 use twilight_model::channel::message::MessageType;
 use twilight_model::channel::permission_overwrite::PermissionOverwrite;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel, Message, TextChannel};
@@ -19,6 +16,7 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct CachedUser {
+    pub id: UserId,
     pub name: String,
     pub discriminator: u16,
     pub avatar: Option<String>,
@@ -28,6 +26,7 @@ pub struct CachedUser {
 impl From<&User> for CachedUser {
     fn from(user: &User) -> Self {
         CachedUser {
+            id: user.id,
             name: user.name.clone(),
             // TODO: Decide if we want to switch to storing a String here
             discriminator: user.discriminator.parse().unwrap(),
@@ -39,6 +38,7 @@ impl From<&User> for CachedUser {
 
 #[derive(Debug, Clone)]
 pub struct CachedGuild {
+    pub id: GuildId,
     pub name: String,
     pub icon: Option<String>,
     pub roles: Vec<RoleId>,
@@ -48,6 +48,7 @@ pub struct CachedGuild {
 impl From<&PartialGuild> for CachedGuild {
     fn from(guild: &PartialGuild) -> Self {
         CachedGuild {
+            id: guild.id,
             name: guild.name.clone(),
             icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
@@ -59,6 +60,7 @@ impl From<&PartialGuild> for CachedGuild {
 impl From<&Guild> for CachedGuild {
     fn from(guild: &Guild) -> Self {
         CachedGuild {
+            id: guild.id,
             name: guild.name.clone(),
             icon: guild.icon.clone(),
             roles: guild.roles.keys().cloned().collect(),
@@ -69,6 +71,7 @@ impl From<&Guild> for CachedGuild {
 
 #[derive(Debug, Clone)]
 pub struct CachedRole {
+    pub id: RoleId,
     pub name: String,
     pub color: u32,
     pub position: i64,
@@ -78,6 +81,7 @@ pub struct CachedRole {
 impl From<&Role> for CachedRole {
     fn from(role: &Role) -> Self {
         CachedRole {
+            id: role.id,
             name: role.name.clone(),
             color: role.color,
             position: role.position,
@@ -121,6 +125,7 @@ impl From<&MemberUpdate> for CachedMember {
 
 #[derive(Debug, Clone)]
 pub struct CachedChannel {
+    pub id: ChannelId,
     pub name: String,
     pub kind: ChannelType,
     pub permission_overwrites: Vec<PermissionOverwrite>,
@@ -129,6 +134,7 @@ pub struct CachedChannel {
 impl From<&TextChannel> for CachedChannel {
     fn from(channel: &TextChannel) -> Self {
         CachedChannel {
+            id: channel.id,
             name: channel.name.clone(),
             kind: channel.kind,
             permission_overwrites: channel.permission_overwrites.clone(),
@@ -151,10 +157,10 @@ impl From<&Message> for CachedMessage {
     }
 }
 
-/// We keep our own cache due as serenity does not backfill its cache on requests.
 // TODO: I don't think the rest of these should be LRU other than messages, as we need them for
 //       all active objects. Investigate more once we have the GraphMap implemented.
 //       A bonus of non-LRU maps here would be the ability to use RwLock.
+// TODO: Rewrite this to be partitioned per-guild.
 pub struct Cache {
     http: Client,
     users: Mutex<LruCache<UserId, CachedUser>>,
@@ -276,23 +282,28 @@ impl Cache {
         cache.put(user.id, CachedUser::from(user));
     }
 
-    pub async fn get_user(&self, user_id: UserId) -> HttpResult<Option<CachedUser>> {
+    pub async fn get_user(&self, user_id: UserId) -> Result<CachedUser> {
         let cached_user = {
             let mut cache = self.users.lock();
             cache.get(&user_id).cloned()
         };
 
-        Ok(match cached_user {
-            Some(cached_user) => Some(cached_user),
+        match cached_user {
+            Some(cached_user) => Ok(cached_user),
             None => {
                 info!("user {} not in cache, fetching", user_id);
-                self.http.user(user_id).await?.map(|user| {
-                    self.put_user(&user);
 
-                    CachedUser::from(&user)
-                })
+                let user = self
+                    .http
+                    .user(user_id)
+                    .await?
+                    .context("user does not exist")?;
+
+                self.put_user(&user);
+
+                Ok(CachedUser::from(&user))
             }
-        })
+        }
     }
 
     fn put_guild(&self, guild: &PartialGuild) {
@@ -321,23 +332,28 @@ impl Cache {
         cache.put(guild.id, CachedGuild::from(guild));
     }
 
-    pub async fn get_guild(&self, guild_id: GuildId) -> HttpResult<Option<CachedGuild>> {
+    pub async fn get_guild(&self, guild_id: GuildId) -> Result<CachedGuild> {
         let cached_guild = {
             let mut cache = self.guilds.lock();
             cache.get(&guild_id).cloned()
         };
 
-        Ok(match cached_guild {
-            Some(cached_guild) => Some(cached_guild),
+        match cached_guild {
+            Some(cached_guild) => Ok(cached_guild),
             None => {
                 info!("guild {} not in cache, fetching", guild_id);
-                self.http.guild(guild_id).await?.map(|guild| {
-                    self.put_full_guild(&guild);
 
-                    CachedGuild::from(&guild)
-                })
+                let guild = self
+                    .http
+                    .guild(guild_id)
+                    .await?
+                    .context("guild does not exist")?;
+
+                self.put_full_guild(&guild);
+
+                Ok(CachedGuild::from(&guild))
             }
-        })
+        }
     }
 
     fn put_role(&self, role: &Role) {
@@ -345,30 +361,29 @@ impl Cache {
         cache.put(role.id, CachedRole::from(role));
     }
 
-    pub async fn get_role(
-        &self,
-        guild_id: GuildId,
-        role_id: RoleId,
-    ) -> HttpResult<Option<CachedRole>> {
+    pub async fn get_role(&self, guild_id: GuildId, role_id: RoleId) -> Result<CachedRole> {
         let cached_role = {
             let mut cache = self.roles.lock();
             cache.get(&role_id).cloned()
         };
 
         match cached_role {
-            Some(cached_role) => Ok(Some(cached_role)),
+            Some(cached_role) => Ok(cached_role),
             None => {
                 info!("role {} not in cache, fetching", role_id);
-                self.http.roles(guild_id).await.map(|roles| {
-                    for role in &roles {
-                        self.put_role(role);
-                    }
 
-                    roles
-                        .iter()
-                        .find(|role| role.id == role_id)
-                        .map(CachedRole::from)
-                })
+                let roles = self.http.roles(guild_id).await?;
+
+                for role in &roles {
+                    self.put_role(role);
+                }
+
+                let role = roles
+                    .iter()
+                    .find(|role| role.id == role_id)
+                    .context("role does not exist")?;
+
+                Ok(CachedRole::from(role))
             }
         }
     }
@@ -404,34 +419,31 @@ impl Cache {
         );
     }
 
-    pub async fn get_member(
-        &self,
-        guild_id: GuildId,
-        user_id: UserId,
-    ) -> HttpResult<Option<CachedMember>> {
+    pub async fn get_member(&self, guild_id: GuildId, user_id: UserId) -> Result<CachedMember> {
         let cached_member = {
             let mut cache = self.members.lock();
             cache.get(&(guild_id, user_id)).cloned()
         };
 
-        Ok(match cached_member {
-            Some(cached_member) => Some(cached_member),
+        match cached_member {
+            Some(cached_member) => Ok(cached_member),
             None => {
                 info!(
                     "member {} for guild {} not in cache, fetching",
                     user_id, guild_id
                 );
 
-                self.http
+                let member = self
+                    .http
                     .guild_member(guild_id, user_id)
                     .await?
-                    .map(|member| {
-                        self.put_full_member(&member);
+                    .context("member does not exist")?;
 
-                        CachedMember::from(&member)
-                    })
+                self.put_full_member(&member);
+
+                Ok(CachedMember::from(&member))
             }
-        })
+        }
     }
 
     fn put_channel(&self, channel: &TextChannel) {
@@ -439,28 +451,33 @@ impl Cache {
         cache.put(channel.id, CachedChannel::from(channel));
     }
 
-    pub async fn get_channel(&self, channel_id: ChannelId) -> HttpResult<Option<CachedChannel>> {
+    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<CachedChannel> {
         let cached_channel = {
             let mut cache = self.channels.lock();
             cache.get(&channel_id).cloned()
         };
 
-        Ok(match cached_channel {
-            Some(cached_channel) => Some(cached_channel),
+        match cached_channel {
+            Some(cached_channel) => Ok(cached_channel),
             None => {
                 info!("channel {} not in cache, fetching", channel_id);
-                self.http
+
+                let channel = self
+                    .http
                     .channel(channel_id)
                     .await?
-                    .and_then(|channel| match channel {
-                        Channel::Guild(GuildChannel::Text(channel)) => {
-                            self.put_channel(&channel);
-                            Some(CachedChannel::from(&channel))
-                        }
-                        _ => None,
-                    })
+                    .context("channel does not exist")?;
+
+                match channel {
+                    Channel::Guild(GuildChannel::Text(channel)) => {
+                        self.put_channel(&channel);
+
+                        Ok(CachedChannel::from(&channel))
+                    }
+                    _ => anyhow::bail!("not a guild text channel"),
+                }
             }
-        })
+        }
     }
 
     fn put_message(&self, message: &Message) {
@@ -488,25 +505,27 @@ impl Cache {
         &self,
         channel_id: ChannelId,
         message_id: MessageId,
-    ) -> HttpResult<Option<CachedMessage>> {
+    ) -> Result<CachedMessage> {
         let cached_message = {
             let mut cache = self.messages.lock();
             cache.get(&message_id).cloned()
         };
 
-        Ok(match cached_message {
-            Some(cached_message) => Some(cached_message),
+        match cached_message {
+            Some(cached_message) => Ok(cached_message),
             None => {
                 info!("message {} not in cache, fetching", message_id);
-                self.http
+
+                let message = self
+                    .http
                     .message(channel_id, message_id)
                     .await?
-                    .map(|message| {
-                        self.put_message(&message);
+                    .context("message does not exist")?;
 
-                        CachedMessage::from(&message)
-                    })
+                self.put_message(&message);
+
+                Ok(CachedMessage::from(&message))
             }
-        })
+        }
     }
 }
