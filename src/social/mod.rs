@@ -2,7 +2,7 @@ pub mod graph;
 pub mod inference;
 
 use anyhow::Result;
-use tracing::info;
+use tracing::{error, info};
 use twilight_model::channel::message::MessageType;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel};
 use twilight_model::gateway::event::Event;
@@ -72,12 +72,39 @@ async fn process_interaction(context: &Context, interaction: Interaction) {
     let interaction_string = interaction.to_string(&context.cache).await;
     info!("{}", interaction_string);
 
-    let mut social = context.social.lock();
+    let changes = {
+        let mut social = context.social.lock();
 
-    let changes = social.infer(&interaction);
-    for change in &changes {
-        info!("-> {:?}", change);
+        let changes = social.infer(&interaction);
+        for change in &changes {
+            info!("-> {:?}", change);
+        }
+
+        social.apply(&interaction, &changes);
+
+        changes
+    };
+
+    if let Some(pool) = &context.pool {
+        for change in changes {
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+
+            let result = sqlx::query("INSERT INTO events (timestamp, guild, channel, source, target, reason) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(timestamp)
+            .bind(interaction.guild.0)
+            .bind(interaction.channel.0)
+            .bind(change.source.0)
+            .bind(change.target.0)
+            .bind(change.reason as u8)
+            .execute(pool)
+            .await;
+
+            if let Err(error) = result {
+                error!("query error: {}", error);
+            }
+        }
     }
-
-    social.apply(&interaction, &changes);
 }

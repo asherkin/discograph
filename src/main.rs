@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::cache::Cache;
 use crate::context::Context;
 use crate::social::graph::SocialGraph;
+use sqlx::{Connection, MySqlPool};
 
 fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
@@ -35,6 +36,33 @@ fn get_optional_env(key: &str) -> Option<String> {
 async fn main() -> Result<()> {
     // Initialize the tracing subscriber.
     tracing_subscriber::fmt::init();
+
+    let pool = if let Some(url) = get_optional_env("DATABASE_URL") {
+        debug!("DATABASE_URL set, connecting to database");
+
+        let pool = MySqlPool::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .test_on_acquire(false)
+            .build(&url)
+            .await?;
+
+        // Note sure if this makes sense versus just setting the min_size to 1.
+        let mut connection = pool
+            .acquire()
+            .await
+            .context("database connection could not be established")?;
+
+        connection.ping().await?;
+        connection.close().await?;
+
+        info!("database connection established");
+
+        Some(pool)
+    } else {
+        debug!("DATABASE_URL not set");
+
+        None
+    };
 
     let token = get_optional_env("DISCORD_TOKEN").context("missing discord bot token")?;
 
@@ -90,6 +118,7 @@ async fn main() -> Result<()> {
             http: http.clone(),
             cache: cache.clone(),
             social: social.clone(),
+            pool: pool.clone(),
         };
 
         tokio::spawn(async move {

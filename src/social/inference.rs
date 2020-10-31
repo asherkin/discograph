@@ -116,13 +116,14 @@ impl Interaction {
 
 pub type RelationshipStrength = f32;
 
+// These values are serialized and can't be modified.
 #[derive(Debug, Copy, Clone)]
 pub enum RelationshipChangeReason {
-    Reaction,
-    MessageDirectMention,
-    MessageIndirectMention,
-    MessageAdjacency,
-    MessageBinarySequence,
+    Reaction = 1,
+    MessageDirectMention = 2,
+    MessageIndirectMention = 3,
+    MessageAdjacency = 4,
+    MessageBinarySequence = 5,
 }
 
 // TODO: I think this needs to be based on the total number of nodes in the graph.

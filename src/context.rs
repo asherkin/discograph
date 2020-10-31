@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use sqlx::MySqlPool;
 use twilight_gateway::shard::CommandError;
 use twilight_gateway::Shard;
 use twilight_http::Client;
@@ -21,6 +22,7 @@ pub struct Context {
     pub http: Client,
     pub cache: Arc<Cache>,
     pub social: Arc<Mutex<SocialGraph>>,
+    pub pool: Option<MySqlPool>,
 }
 
 impl Context {
