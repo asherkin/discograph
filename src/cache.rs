@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use lru::LruCache;
 use parking_lot::Mutex;
-use tracing::info;
+use tracing::{debug, info};
 use twilight_http::Client;
 use twilight_model::channel::message::MessageType;
 use twilight_model::channel::permission_overwrite::PermissionOverwrite;
@@ -274,7 +274,7 @@ impl Cache {
             _ => info!("event not used by cache: {:?}", event.kind()),
         }
 
-        info!("cache stats: {:?}", self.get_stats());
+        debug!("cache stats: {:?}", self.get_stats());
     }
 
     fn put_user(&self, user: &User) {

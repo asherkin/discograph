@@ -33,17 +33,23 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
             }
         }
         MessageCreate(message) if message.kind == MessageType::Regular => {
-            let interaction = Interaction::new_from_message(message)?;
-            process_interaction(context, interaction).await;
+            // Ignore messages from ourselves
+            if message.author.id != context.user.id {
+                let interaction = Interaction::new_from_message(message)?;
+                process_interaction(context, interaction).await;
+            }
         }
         ReactionAdd(reaction) => {
-            let message = context
-                .cache
-                .get_message(reaction.channel_id, reaction.message_id)
-                .await?;
+            // Ignore reactions from ourselves
+            if reaction.user_id != context.user.id {
+                let message = context
+                    .cache
+                    .get_message(reaction.channel_id, reaction.message_id)
+                    .await?;
 
-            let interaction = Interaction::new_from_reaction(reaction, &message)?;
-            process_interaction(context, interaction).await;
+                let interaction = Interaction::new_from_reaction(reaction, &message)?;
+                process_interaction(context, interaction).await;
+            }
         }
         _ => (),
     }

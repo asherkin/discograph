@@ -6,7 +6,7 @@ mod social;
 use anyhow::{Context as AnyhowContext, Result};
 use parking_lot::Mutex;
 use tokio::stream::StreamExt;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use twilight_gateway::{cluster::Cluster, Event};
 use twilight_http::{Client as HttpClient, Client};
 use twilight_model::gateway::presence::ActivityType;
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        info!("received event: {:?}", event);
+        debug!("received event: {:?}", event);
 
         // Update the cache with the event.
         // Done before we spawn the tasks to ensure the cache is updated.

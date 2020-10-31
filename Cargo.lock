@@ -27,6 +27,11 @@ version = "1.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "arc-swap"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "async-tungstenite"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -100,8 +105,8 @@ version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.80 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-integer 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-integer 0.1.44 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.44 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -186,10 +191,10 @@ dependencies = [
  "tokio 0.2.22 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing-subscriber 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "twilight-command-parser 0.2.0-beta.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
- "twilight-gateway 0.2.0-beta.1 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
- "twilight-http 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
- "twilight-model 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-command-parser 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-gateway 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-http 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-model 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
  "unicode-segmentation 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -658,6 +663,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio-named-pipes"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "log 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mio 0.6.22 (registry+https://github.com/rust-lang/crates.io-index)",
+ "miow 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "mio-uds"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -676,6 +692,15 @@ dependencies = [
  "net2 0.2.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "ws2_32-sys 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "miow"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "socket2 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -701,16 +726,16 @@ dependencies = [
 
 [[package]]
 name = "num-integer"
-version = "0.1.43"
+version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "autocfg 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "num-traits 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "num-traits"
-version = "0.2.12"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "autocfg 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -740,7 +765,7 @@ name = "ordered-float"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "num-traits 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num-traits 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1112,6 +1137,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "arc-swap 0.4.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.80 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1183,10 +1217,13 @@ dependencies = [
  "libc 0.2.80 (registry+https://github.com/rust-lang/crates.io-index)",
  "memchr 2.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.6.22 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mio-named-pipes 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio-uds 0.6.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project-lite 0.1.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "signal-hook-registry 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "slab 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-macros 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1332,16 +1369,17 @@ dependencies = [
 
 [[package]]
 name = "twilight-command-parser"
-version = "0.2.0-beta.0"
-source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#ed5e93aa7b14019cf745ded19405f962f3b7f2a0"
+version = "0.2.0"
+source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#c0d022527daf22ac00bf658688d740f99c3f3890"
 dependencies = [
  "unicase 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unicode-segmentation 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "twilight-gateway"
-version = "0.2.0-beta.1"
-source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#ed5e93aa7b14019cf745ded19405f962f3b7f2a0"
+version = "0.2.0"
+source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#c0d022527daf22ac00bf658688d740f99c3f3890"
 dependencies = [
  "async-tungstenite 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1354,28 +1392,28 @@ dependencies = [
  "serde_json 1.0.59 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.2.22 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",
- "twilight-gateway-queue 0.1.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
- "twilight-http 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
- "twilight-model 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-gateway-queue 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-http 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-model 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
  "url 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "twilight-gateway-queue"
-version = "0.1.0"
-source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#ed5e93aa7b14019cf745ded19405f962f3b7f2a0"
+version = "0.2.0"
+source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#c0d022527daf22ac00bf658688d740f99c3f3890"
 dependencies = [
  "futures-channel 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-util 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.2.22 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",
- "twilight-http 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-http 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
 ]
 
 [[package]]
 name = "twilight-http"
-version = "0.2.0-beta.2"
-source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#ed5e93aa7b14019cf745ded19405f962f3b7f2a0"
+version = "0.2.0"
+source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#c0d022527daf22ac00bf658688d740f99c3f3890"
 dependencies = [
  "bytes 0.5.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-channel 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1387,14 +1425,14 @@ dependencies = [
  "serde_repr 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.2.22 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing 0.1.21 (registry+https://github.com/rust-lang/crates.io-index)",
- "twilight-model 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
+ "twilight-model 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)",
  "url 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "twilight-model"
-version = "0.2.0-beta.2"
-source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#ed5e93aa7b14019cf745ded19405f962f3b7f2a0"
+version = "0.2.0"
+source = "git+https://github.com/twilight-rs/twilight.git?branch=trunk#c0d022527daf22ac00bf658688d740f99c3f3890"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.117 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1639,6 +1677,7 @@ dependencies = [
 "checksum ahash 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)" = "e8fd72866655d1904d6b0997d0b07ba561047d070fbe29de039031c641b61217"
 "checksum ansi_term 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
 "checksum anyhow 1.0.33 (registry+https://github.com/rust-lang/crates.io-index)" = "a1fd36ffbb1fb7c834eac128ea8d0e310c5aeb635548f9d58861e1308d46e71c"
+"checksum arc-swap 0.4.7 (registry+https://github.com/rust-lang/crates.io-index)" = "4d25d88fd6b8041580a654f9d0c581a047baee2b3efee13275f2fc392fc75034"
 "checksum async-tungstenite 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)" = "9ce503a5cb1e7450af7d211b86b84807791b251f335b2f43f1e26b85a416f315"
 "checksum autocfg 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 "checksum base64 0.12.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
@@ -1711,12 +1750,14 @@ dependencies = [
 "checksum mime_guess 2.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2684d4c2e97d99848d30b324b00c8fcc7e5c897b7cbb5819b09e7c90e8baf212"
 "checksum miniz_oxide 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "0f2d26ec3309788e423cfbf68ad1800f061638098d76a83681af979dc4eda19d"
 "checksum mio 0.6.22 (registry+https://github.com/rust-lang/crates.io-index)" = "fce347092656428bc8eaf6201042cb551b8d67855af7374542a92a0fbfcac430"
+"checksum mio-named-pipes 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "0840c1c50fd55e521b247f949c241c9997709f23bd7f023b9762cd561e935656"
 "checksum mio-uds 0.6.8 (registry+https://github.com/rust-lang/crates.io-index)" = "afcb699eb26d4332647cc848492bbc15eafb26f08d0304550d5aa1f612e066f0"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
+"checksum miow 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)" = "07b88fb9795d4d36d62a012dfbf49a8f5cf12751f36d31a9dbe66d528e58979e"
 "checksum net2 0.2.35 (registry+https://github.com/rust-lang/crates.io-index)" = "3ebc3ec692ed7c9a255596c67808dee269f64655d8baf7b4f0638e51ba1d6853"
 "checksum nix 0.18.0 (registry+https://github.com/rust-lang/crates.io-index)" = "83450fe6a6142ddd95fb064b746083fc4ef1705fe81f64a64e1d4b39f54a1055"
-"checksum num-integer 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)" = "8d59457e662d541ba17869cf51cf177c0b5f0cbf476c66bdc90bf1edac4f875b"
-"checksum num-traits 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)" = "ac267bcc07f48ee5f8935ab0d24f316fb722d7a1292e2913f0cc196b29ffd611"
+"checksum num-integer 0.1.44 (registry+https://github.com/rust-lang/crates.io-index)" = "d2cc698a63b549a70bc047073d2949cce27cd1c7b0a4a862d08a8031bc2801db"
+"checksum num-traits 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)" = "9a64b1ec5cda2586e284722486d802acf1f7dbdc623e2bfc57e65ca1cd099290"
 "checksum num_cpus 1.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "05499f3756671c15885fee9034446956fff3f243d6077b91e5767df161f766b3"
 "checksum once_cell 1.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
 "checksum opaque-debug 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
@@ -1763,6 +1804,7 @@ dependencies = [
 "checksum serde_urlencoded 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9ec5d77e2d4c73717816afac02670d5c4f534ea95ed430442cad02e7a6e32c97"
 "checksum sha-1 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "170a36ea86c864a3f16dd2687712dd6646f7019f301e57537c7f4dc9f5916770"
 "checksum sharded-slab 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7b4921be914e16899a80adefb821f8ddb7974e3f1250223575a44ed994882127"
+"checksum signal-hook-registry 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a3e12110bc539e657a646068aaf5eb5b63af9d0c1f7b29c97113fad80e15f035"
 "checksum slab 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "c111b5bd5695e56cffe5129854aa230b39c93a305372fdbb2668ca2394eea9f8"
 "checksum smallvec 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "fbee7696b84bbf3d89a1c2eccff0850e3047ed46bfcd2e92c29a2d074d57e252"
 "checksum socket2 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)" = "b1fa70dc5c8104ec096f4fe7ede7a221d35ae13dcd19ba1ad9a81d2cab9a1c44"
@@ -1785,11 +1827,11 @@ dependencies = [
 "checksum tracing-subscriber 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)" = "2810660b9d5b18895d140caba6401765749a6a162e5d0736cfc44ea50db9d79d"
 "checksum try-lock 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
 "checksum tungstenite 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f0308d80d86700c5878b9ef6321f020f29b1bb9d5ff3cab25e75e23f3a492a23"
-"checksum twilight-command-parser 0.2.0-beta.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
-"checksum twilight-gateway 0.2.0-beta.1 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
-"checksum twilight-gateway-queue 0.1.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
-"checksum twilight-http 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
-"checksum twilight-model 0.2.0-beta.2 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
+"checksum twilight-command-parser 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
+"checksum twilight-gateway 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
+"checksum twilight-gateway-queue 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
+"checksum twilight-http 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
+"checksum twilight-model 0.2.0 (git+https://github.com/twilight-rs/twilight.git?branch=trunk)" = "<none>"
 "checksum typenum 1.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "373c8a200f9e67a0c95e62a4f52fbf80c23b4381c05a17845531982fa99e6b33"
 "checksum unicase 2.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "50f37be617794602aabbeee0be4f259dc1778fabe05e2d67ee8f79326d5cb4f6"
 "checksum unicode-bidi 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "49f2bd0c6468a8230e1db229cff8029217cf623c767ea5d60bfbd42729ea54d5"

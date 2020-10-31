@@ -1,10 +1,16 @@
-use anyhow::Result;
-use tracing::info;
-use twilight_command_parser::{Command, CommandParserConfig, Parser};
+use anyhow::{Context as AnyhowContext, Result};
+use futures::future::join_all;
+use tokio::io::AsyncWriteExt;
+use tokio::process;
+use tracing::{debug, error, info};
+use twilight_command_parser::{Arguments, CommandParserConfig, Parser};
 use twilight_model::channel::embed::{Embed, EmbedField, EmbedFooter};
 use twilight_model::channel::Message;
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::MessageCreate;
+use twilight_model::id::GuildId;
+
+use std::process::Stdio;
 
 use crate::context::Context;
 
@@ -21,15 +27,17 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         return Ok(false);
     }
 
-    info!("new message: {}", message.content);
+    debug!("new message: {}", message.content);
 
     // TODO: I think we want to switch back to our own command parsing.
     let mut config = CommandParserConfig::new();
-    config.add_prefix(format!("<@{}>", context.user.id));
-    config.add_prefix(format!("<@!{}>", context.user.id));
+    config.add_prefix(format!("<@{}> ", context.user.id));
+    config.add_prefix(format!("<@!{}> ", context.user.id));
     config.add_command("help", false);
+    config.add_command("invite", false);
     config.add_command("graph", false);
     config.add_command("stats", false);
+    config.add_command("dump", false);
 
     let parser = Parser::new(config);
     let command = match parser.parse(&message.content) {
@@ -37,14 +45,25 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         None => return Ok(false),
     };
 
-    info!("command: {:?}", command);
+    info!("received command: {:?} in message {:?}", command, message);
 
-    match command {
-        Command { name: "help", .. } => command_help(context, message).await?,
-        Command { name: "graph", .. } => todo!(),
-        Command { name: "stats", .. } => command_stats(context, message).await?,
-        _ => (),
+    let result = match command.name {
+        "help" | "invite" => command_help(context, message).await,
+        "graph" => command_graph(context, message).await,
+        "stats" => command_stats(context, message).await,
+        "dump" => command_dump(context, message, command.arguments).await,
+        _ => Ok(()),
     };
+
+    if let Err(error) = result {
+        error!("command failed: {}", error);
+
+        context
+            .http
+            .create_message(message.channel_id)
+            .content("Sorry, there was an error handling that command")?
+            .await?;
+    }
 
     Ok(true)
 }
@@ -114,16 +133,133 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
     Ok(())
 }
 
+async fn command_graph(context: &Context, message: &Message) -> Result<()> {
+    // TODO: Respond to the command on errors.
+
+    let guild_id = message.guild_id.context("message not to guild")?;
+    let guild_name = context.cache.get_guild(guild_id).await?.name;
+
+    let graph = {
+        let social = context.social.lock();
+
+        social
+            .build_guild_graph(guild_id)
+            .context("no graph for guild")?
+    };
+
+    let dot = graph
+        .to_dot(context, guild_id, Some(&message.author))
+        .await?;
+
+    let png = render_dot(&dot).await?;
+
+    context
+        .http
+        .create_message(message.channel_id)
+        .attachment(format!("{}.png", guild_name), png)
+        .await?;
+
+    Ok(())
+}
+
 async fn command_stats(context: &Context, message: &Message) -> Result<()> {
     context
         .http
         .create_message(message.channel_id)
-        .content(format!(
-            "<@{}> {:?}",
-            message.author.id,
-            context.cache.get_stats()
-        ))?
+        .content(format!("{:?}", context.cache.get_stats()))?
         .await?;
 
     Ok(())
+}
+
+async fn command_dump(
+    context: &Context,
+    message: &Message,
+    mut arguments: Arguments<'_>,
+) -> Result<()> {
+    if !context.owners.contains(&message.author.id) {
+        info!(
+            "{} tried to run dump command but isn't an owner",
+            message.author.id,
+        );
+        return Ok(());
+    }
+
+    if let Some(guild_id) = arguments.next() {
+        let guild_id: u64 = guild_id.parse()?;
+        let guild_id = GuildId(guild_id);
+
+        let guild_name = context.cache.get_guild(guild_id).await?.name;
+
+        let graph = {
+            let social = context.social.lock();
+
+            social
+                .build_guild_graph(guild_id)
+                .context("no graph for guild")?
+        };
+
+        let dot = graph.to_dot(context, guild_id, None).await?;
+
+        let png = render_dot(&dot).await?;
+
+        context
+            .http
+            .create_message(message.channel_id)
+            .attachment(format!("{}.dot", guild_name), dot)
+            .attachment(format!("{}.png", guild_name), png)
+            .await?;
+
+        return Ok(());
+    }
+
+    let guild_ids = {
+        let social = context.social.lock();
+        social.get_all_guild_ids()
+    };
+
+    let guild_futures = guild_ids
+        .into_iter()
+        .map(|guild_id| context.cache.get_guild(guild_id));
+
+    let guilds: Vec<_> = join_all(guild_futures)
+        .await
+        .into_iter()
+        .filter_map(|guild| guild.ok())
+        .map(|guild| format!("{} - {}", guild.id, guild.name))
+        .collect();
+
+    let mut content = "Guilds:\n".to_owned();
+    content.push_str(&guilds.join("\n"));
+
+    context
+        .http
+        .create_message(message.channel_id)
+        .content(content)?
+        .await?;
+
+    Ok(())
+}
+
+async fn render_dot(dot: &str) -> Result<Vec<u8>> {
+    let mut graphviz = process::Command::new("dot")
+        .arg("-v")
+        .arg("-Tpng")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    {
+        let stdin = graphviz.stdin.as_mut().unwrap();
+        stdin.write_all(dot.as_bytes()).await?;
+    }
+
+    let output = graphviz.wait_with_output().await?;
+
+    if !output.status.success() {
+        anyhow::bail!("graphviz failed");
+    }
+
+    Ok(output.stdout)
 }

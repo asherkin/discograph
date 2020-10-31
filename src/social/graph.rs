@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use super::inference::{
     InferenceState, Interaction, RelationshipChange, RelationshipStrength, RELATIONSHIP_DECAY,
 };
-use crate::cache::{Cache, CachedMember};
+use crate::cache::CachedMember;
+use crate::context::Context;
 
 // TODO: This doesn't handle counting wide characters very well,
 //       Probably want to pull in the unicode-width crate for that.
@@ -96,7 +97,7 @@ impl UserRelationshipGraphMap {
 
     pub async fn to_dot(
         &self,
-        cache: &Cache,
+        context: &Context,
         guild_id: GuildId,
         requesting_user: Option<&User>,
     ) -> AnyhowResult<String> {
@@ -132,12 +133,13 @@ impl UserRelationshipGraphMap {
 
         // Load all color-affecting roles for the guild.
         let roles = {
-            let role_futures = cache
+            let role_futures = context
+                .cache
                 .get_guild(guild_id)
                 .await?
                 .roles
                 .into_iter()
-                .map(|role_id| cache.get_role(guild_id, role_id));
+                .map(|role_id| context.cache.get_role(guild_id, role_id));
 
             let mut roles: Vec<_> = join_all(role_futures)
                 .await
@@ -156,7 +158,9 @@ impl UserRelationshipGraphMap {
         // Get the display name for each user ID, ignoring failed lookups or bots.
         // TODO: This can be *very* slow if the user isn't in the cache..
         let names_and_colors: HashMap<_, _> = {
-            let user_futures = user_ids.iter().map(|&user_id| cache.get_user(user_id));
+            let user_futures = user_ids
+                .iter()
+                .map(|&user_id| context.cache.get_user(user_id));
 
             let member_futures = join_all(user_futures).await.into_iter().filter_map(|user| {
                 let user = user.ok()?;
@@ -166,7 +170,7 @@ impl UserRelationshipGraphMap {
                 }
 
                 Some(async {
-                    let member = cache.get_member(guild_id, user.id).await;
+                    let member = context.cache.get_member(guild_id, user.id).await;
 
                     (user, member)
                 })
@@ -224,9 +228,10 @@ impl UserRelationshipGraphMap {
 
         let fontname = "Noto Sans Display, Noto Emoji";
 
-        let mut lines = Vec::with_capacity(11 + user_weights.len() + undirected_edges.len() + 1);
+        let mut lines = Vec::with_capacity(12 + user_weights.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
+        lines.push(String::from("    pad = \"0.3\""));
         lines.push(String::from("    layout = \"fdp\""));
         lines.push(String::from("    K = \"0.1\""));
         lines.push(String::from("    splines = \"true\""));
@@ -234,13 +239,31 @@ impl UserRelationshipGraphMap {
         lines.push(String::from("    outputorder = \"edgesfirst\""));
 
         if let Some(user) = requesting_user {
-            // TODO: Add a timestamp and the guild / channel info.
-            let safe_name = user.name.replace("\\", "\\\\").replace("\"", "\\\"");
+            let guild = context.cache.get_guild(guild_id).await?;
 
+            let member = context
+                .cache
+                .get_member(guild_id, context.user.id)
+                .await
+                .ok();
+
+            let nickname = match &member {
+                Some(CachedMember {
+                    nick: Some(nick), ..
+                }) => nick,
+                _ => &context.user.name,
+            };
+
+            let safe_name = user.name.replace("\\", "\\\\").replace("\"", "\\\"");
+            let safe_nickname = nickname.replace("\\", "\\\\").replace("\"", "\\\"");
+            let safe_guild_name = guild.name.replace("\\", "\\\\").replace("\"", "\\\"");
+
+            // TODO: Add a timestamp.
             let label = format!(
-                "Generated for {}#{:04} by DiscoGraph",
-                safe_name, user.discriminator
+                "Generated for {}#{:04} by {} in {}",
+                safe_name, user.discriminator, safe_nickname, safe_guild_name,
             );
+
             lines.push(format!("    label = \"{}\"", label));
             lines.push(String::from("    labelloc = \"bottom\""));
             lines.push(String::from("    labeljust = \"left\""));
