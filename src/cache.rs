@@ -7,7 +7,7 @@ use twilight_model::channel::message::MessageType;
 use twilight_model::channel::permission_overwrite::PermissionOverwrite;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel, Message, TextChannel};
 use twilight_model::gateway::event::Event;
-use twilight_model::gateway::payload::MemberUpdate;
+use twilight_model::gateway::payload::{MemberUpdate, MessageUpdate};
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
 use twilight_model::id::{ChannelId, GuildId, MessageId, RoleId, UserId};
 use twilight_model::user::User;
@@ -263,7 +263,7 @@ impl Cache {
                 }
             }
             Event::MessageCreate(message) => self.put_message(&message),
-            // TODO: Event::MessageUpdate(message) => self.put_message(&message),
+            Event::MessageUpdate(message) => self.put_message_update(&message),
             Event::ReactionAdd(reaction) => {
                 if let Some(member) = &reaction.member {
                     self.put_full_member(member);
@@ -499,6 +499,35 @@ impl Cache {
 
         let mut cache = self.messages.lock();
         cache.put(message.id, CachedMessage::from(message));
+    }
+
+    fn put_message_update(&self, message: &MessageUpdate) {
+        if let Some(author) = &message.author {
+            self.put_user(author);
+        }
+
+        if let Some(mentions) = &message.mentions {
+            for mentioned_user in mentions {
+                self.put_user(mentioned_user);
+
+                // We can't do this in `put_user` as it needs the guild ID.
+                // TODO: https://github.com/twilight-rs/twilight/issues/566
+                // if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
+                //     self.put_member(guild_id, mentioned_user.id, member);
+                // }
+            }
+        }
+
+        if let (Some(author), Some(kind)) = (&message.author, message.kind) {
+            let mut cache = self.messages.lock();
+            cache.put(
+                message.id,
+                CachedMessage {
+                    author_id: author.id,
+                    kind,
+                },
+            );
+        }
     }
 
     pub async fn get_message(

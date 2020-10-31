@@ -7,9 +7,10 @@ use twilight_model::channel::message::MessageType;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::{
-    ChannelCreate, GuildCreate, MessageCreate, ReactionAdd,
+    ChannelCreate, ChannelDelete, GuildCreate, GuildDelete, MessageCreate, ReactionAdd,
 };
 use twilight_model::gateway::payload::ChannelCreate as ChannelCreatePayload;
+use twilight_model::gateway::payload::ChannelDelete as ChannelDeletePayload;
 
 use crate::context::Context;
 use crate::social::inference::Interaction;
@@ -23,6 +24,10 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 social.get_graph(guild.id, channel_id);
             }
         }
+        GuildDelete(guild) => {
+            let mut social = context.social.lock();
+            social.remove_guild(guild.id);
+        }
         ChannelCreate(ChannelCreatePayload(Channel::Guild(GuildChannel::Text(channel))))
             if channel.kind == ChannelType::GuildText =>
         {
@@ -30,6 +35,12 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 // Load any existing graph into memory for the channel.
                 let mut social = context.social.lock();
                 social.get_graph(guild_id, channel.id);
+            }
+        }
+        ChannelDelete(ChannelDeletePayload(Channel::Guild(channel))) => {
+            if let Some(guild_id) = channel.guild_id() {
+                let mut social = context.social.lock();
+                social.remove_channel(guild_id, channel.id());
             }
         }
         MessageCreate(message) if message.kind == MessageType::Regular => {

@@ -495,15 +495,6 @@ impl SocialGraph {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn get_channel_graph(
-        &self,
-        guild_id: GuildId,
-        channel_id: ChannelId,
-    ) -> Option<&UserRelationshipGraphMap> {
-        self.graph.get(&guild_id).and_then(|g| g.get(&channel_id))
-    }
-
     // TODO: Do we want to do this on the client-side instead? Probably.
     pub fn build_guild_graph(&self, guild_id: GuildId) -> Option<UserRelationshipGraphMap> {
         let guild = self.graph.get(&guild_id)?;
@@ -555,6 +546,24 @@ impl SocialGraph {
 
                 existing_graph.unwrap_or_else(UserRelationshipGraphMap::new)
             })
+    }
+
+    pub fn remove_guild(&mut self, guild_id: GuildId) {
+        let channels = self.graph.remove(&guild_id);
+
+        if let Some(channels) = channels {
+            for &channel_id in channels.keys() {
+                self.state.remove(&(guild_id, channel_id));
+            }
+        }
+    }
+
+    pub fn remove_channel(&mut self, guild_id: GuildId, channel_id: ChannelId) {
+        self.state.remove(&(guild_id, channel_id));
+
+        if let Some(channels) = self.graph.get_mut(&guild_id) {
+            channels.remove(&channel_id);
+        }
     }
 
     fn graph_data_file_name(
