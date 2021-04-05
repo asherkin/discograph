@@ -3,7 +3,7 @@ pub mod inference;
 
 use anyhow::Result;
 use tracing::{error, info};
-use twilight_model::channel::message::MessageType;
+use twilight_model::channel::message::{MessageType, MessageReference};
 use twilight_model::channel::{Channel, ChannelType, GuildChannel};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::{
@@ -44,11 +44,19 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
             }
         }
         MessageCreate(message)
-            if message.kind == MessageType::Regular
+            if (message.kind == MessageType::Regular || message.kind == MessageType::Reply)
                 && message.webhook_id.is_none()
                 && message.author.id != context.user.id =>
         {
-            let interaction = Interaction::new_from_message(message)?;
+            let referenced_message = match message.reference {
+                Some(MessageReference { channel_id: Some(channel_id), message_id: Some(message_id), .. }) => Some(context
+                    .cache
+                    .get_message(channel_id, message_id)
+                    .await?),
+                _ => None,
+            };
+
+            let interaction = Interaction::new_from_message(message, referenced_message.as_ref())?;
             process_interaction(context, interaction).await;
         }
         ReactionAdd(reaction) if reaction.user_id != context.user.id => {
