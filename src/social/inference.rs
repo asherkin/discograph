@@ -133,6 +133,7 @@ pub enum RelationshipChangeReason {
 // TODO: I think this needs to be based on the total number of nodes in the graph.
 //       AlliedModders seems to be decaying a bit quick, while Together C & C++ is not quite there.
 pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.02;
+pub const RELATIONSHIP_DECAY_GLOBAL: RelationshipStrength = -0.002;
 
 impl RelationshipChangeReason {
     pub fn get_change_strength(&self) -> RelationshipStrength {
