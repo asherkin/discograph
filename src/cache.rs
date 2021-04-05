@@ -3,7 +3,7 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use tracing::{debug, info};
 use twilight_http::Client;
-use twilight_model::channel::message::MessageType;
+use twilight_model::channel::message::{MessageType, Mention};
 use twilight_model::channel::permission_overwrite::PermissionOverwrite;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel, Message, TextChannel};
 use twilight_model::gateway::event::Event;
@@ -36,6 +36,19 @@ impl From<&User> for CachedUser {
     }
 }
 
+impl From<&Mention> for CachedUser {
+    fn from(mention: &Mention) -> Self {
+        CachedUser {
+            id: mention.id,
+            name: mention.name.clone(),
+            // TODO: Decide if we want to switch to storing a String here
+            discriminator: mention.discriminator.parse().unwrap(),
+            avatar: mention.avatar.clone(),
+            bot: mention.bot,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CachedGuild {
     pub id: GuildId,
@@ -51,7 +64,7 @@ impl From<&PartialGuild> for CachedGuild {
             id: guild.id,
             name: guild.name.clone(),
             icon: guild.icon.clone(),
-            roles: guild.roles.keys().cloned().collect(),
+            roles: guild.roles.iter().map(|role| role.id).collect(),
             owner_id: guild.owner_id,
         }
     }
@@ -63,7 +76,7 @@ impl From<&Guild> for CachedGuild {
             id: guild.id,
             name: guild.name.clone(),
             icon: guild.icon.clone(),
-            roles: guild.roles.keys().cloned().collect(),
+            roles: guild.roles.iter().map(|role| role.id).collect(),
             owner_id: guild.owner_id,
         }
     }
@@ -258,7 +271,7 @@ impl Cache {
             Event::MemberAdd(member) => self.put_full_member(&member),
             Event::MemberUpdate(member) => self.put_member_update(&member),
             Event::MemberChunk(chunk) => {
-                for member in chunk.members.values() {
+                for member in &chunk.members {
                     self.put_full_member(member)
                 }
             }
@@ -280,6 +293,11 @@ impl Cache {
     fn put_user(&self, user: &User) {
         let mut cache = self.users.lock();
         cache.put(user.id, CachedUser::from(user));
+    }
+
+    fn put_user_mention(&self, mention: &Mention) {
+        let mut cache = self.users.lock();
+        cache.put(mention.id, CachedUser::from(mention));
     }
 
     pub async fn get_user(&self, user_id: UserId) -> Result<CachedUser> {
@@ -307,7 +325,7 @@ impl Cache {
     }
 
     fn put_guild(&self, guild: &PartialGuild) {
-        for (_, role) in guild.roles.iter() {
+        for role in &guild.roles {
             self.put_role(role);
         }
 
@@ -316,7 +334,7 @@ impl Cache {
     }
 
     fn put_full_guild(&self, guild: &Guild) {
-        for (_, channel) in guild.channels.iter() {
+        for channel in &guild.channels {
             if let GuildChannel::Text(channel) = channel {
                 if channel.kind == ChannelType::GuildText {
                     self.put_channel(&channel);
@@ -324,7 +342,7 @@ impl Cache {
             }
         }
 
-        for (_, role) in guild.roles.iter() {
+        for role in &guild.roles {
             self.put_role(role);
         }
 
@@ -389,12 +407,6 @@ impl Cache {
     }
 
     fn put_member(&self, guild_id: GuildId, user_id: UserId, member: &PartialMember) {
-        // TODO: https://github.com/twilight-rs/twilight/issues/566
-        // if let Some(user) = &member.user {
-        //     let user = user.read();
-        //     self.put_user(&*user);
-        // }
-
         let mut cache = self.members.lock();
         cache.put((guild_id, user_id), CachedMember::from(member));
     }
@@ -487,14 +499,13 @@ impl Cache {
             self.put_member(guild_id, message.author.id, member);
         }
 
-        for mentioned_user in message.mentions.values() {
-            self.put_user(mentioned_user);
+        for mentioned_user in &message.mentions {
+            self.put_user_mention(mentioned_user);
 
-            // We can't do this in `put_user` as it needs the guild ID.
-            // TODO: https://github.com/twilight-rs/twilight/issues/566
-            // if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
-            //     self.put_member(guild_id, mentioned_user.id, member);
-            // }
+            // We can't do this in `put_user_mention` as it needs the guild ID.
+            if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
+                self.put_member(guild_id, mentioned_user.id, member);
+            }
         }
 
         let mut cache = self.messages.lock();
@@ -507,11 +518,11 @@ impl Cache {
         }
 
         if let Some(mentions) = &message.mentions {
-            for mentioned_user in mentions {
-                self.put_user(mentioned_user);
+            for user in mentions {
+                self.put_user(user);
 
-                // We can't do this in `put_user` as it needs the guild ID.
-                // TODO: https://github.com/twilight-rs/twilight/issues/566
+                // We can't do this in `put_user_mention` as it needs the guild ID.
+                // TODO: MessageUpdate::mentions hasn't been updated to Vec<Mention>
                 // if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
                 //     self.put_member(guild_id, mentioned_user.id, member);
                 // }

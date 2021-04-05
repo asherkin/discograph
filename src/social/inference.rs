@@ -35,10 +35,10 @@ impl Interaction {
 
         let user_mentions = message
             .mentions
-            .keys()
-            .cloned()
-            .filter(|&u| Some(u) != direct_mention)
-            .collect::<Vec<UserId>>();
+            .iter()
+            .map(|mention| mention.id)
+            .filter(|&u| Some(u) != reply_to)
+            .collect::<Vec<_>>();
 
         Ok(Interaction {
             what: InteractionType::Message,

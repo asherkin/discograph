@@ -4,13 +4,15 @@ mod context;
 mod social;
 
 use anyhow::{Context as AnyhowContext, Result};
+use futures::StreamExt;
 use parking_lot::Mutex;
-use tokio::stream::StreamExt;
+use sqlx::Connection;
+use sqlx::mysql::MySqlPoolOptions;
 use tracing::{debug, error, info};
 use twilight_gateway::{cluster::Cluster, Event};
 use twilight_http::{Client as HttpClient, Client};
-use twilight_model::gateway::presence::ActivityType;
 use twilight_model::gateway::Intents;
+use twilight_model::gateway::presence::ActivityType;
 use twilight_model::id::UserId;
 use twilight_model::oauth::team::TeamMembershipState;
 
@@ -22,7 +24,6 @@ use std::sync::Arc;
 use crate::cache::Cache;
 use crate::context::Context;
 use crate::social::graph::SocialGraph;
-use sqlx::{Connection, MySqlPool};
 
 fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
@@ -40,10 +41,10 @@ async fn main() -> Result<()> {
     let pool = if let Some(url) = get_optional_env("DATABASE_URL") {
         debug!("DATABASE_URL set, connecting to database");
 
-        let pool = MySqlPool::builder()
+        let pool = MySqlPoolOptions::new()
             .connect_timeout(std::time::Duration::from_secs(5))
-            .test_on_acquire(false)
-            .build(&url)
+            .test_before_acquire(false)
+            .connect(&url)
             .await?;
 
         // Note sure if this makes sense versus just setting the min_size to 1.
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
             .context("database connection could not be established")?;
 
         connection.ping().await?;
-        connection.close().await?;
+        drop(connection);
 
         info!("database connection established");
 

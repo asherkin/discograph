@@ -20,8 +20,8 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         GuildCreate(guild) => {
             // Load any existing graphs into memory for the guild's channels.
             let mut social = context.social.lock();
-            for &channel_id in guild.channels.keys() {
-                social.get_graph(guild.id, channel_id);
+            for channel in &guild.channels {
+                social.get_graph(guild.id, channel.id());
             }
         }
         GuildDelete(guild) => {
