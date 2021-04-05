@@ -3,7 +3,7 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use tracing::{debug, info};
 use twilight_http::Client;
-use twilight_model::channel::message::{MessageType, Mention};
+use twilight_model::channel::message::{Mention, MessageType};
 use twilight_model::channel::permission_overwrite::PermissionOverwrite;
 use twilight_model::channel::{Channel, ChannelType, GuildChannel, Message, TextChannel};
 use twilight_model::gateway::event::Event;

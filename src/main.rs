@@ -6,13 +6,13 @@ mod social;
 use anyhow::{Context as AnyhowContext, Result};
 use futures::StreamExt;
 use parking_lot::Mutex;
-use sqlx::Connection;
 use sqlx::mysql::MySqlPoolOptions;
+use sqlx::Connection;
 use tracing::{debug, error, info};
 use twilight_gateway::{cluster::Cluster, Event};
 use twilight_http::{Client as HttpClient, Client};
-use twilight_model::gateway::Intents;
 use twilight_model::gateway::presence::ActivityType;
+use twilight_model::gateway::Intents;
 use twilight_model::id::UserId;
 use twilight_model::oauth::team::TeamMembershipState;
 
@@ -29,7 +29,7 @@ fn get_optional_env(key: &str) -> Option<String> {
     match env::var(key) {
         Ok(value) => Some(value),
         Err(env::VarError::NotPresent) => None,
-        Err(error) => panic!(error.to_string()),
+        Err(error) => panic!("{}", error),
     }
 }
 

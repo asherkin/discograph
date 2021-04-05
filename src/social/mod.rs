@@ -3,7 +3,7 @@ pub mod inference;
 
 use anyhow::Result;
 use tracing::{error, info};
-use twilight_model::channel::message::{MessageType, MessageReference};
+use twilight_model::channel::message::{MessageReference, MessageType};
 use twilight_model::channel::{Channel, ChannelType, GuildChannel};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::{
@@ -49,10 +49,11 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 && message.author.id != context.user.id =>
         {
             let referenced_message = match message.reference {
-                Some(MessageReference { channel_id: Some(channel_id), message_id: Some(message_id), .. }) => Some(context
-                    .cache
-                    .get_message(channel_id, message_id)
-                    .await?),
+                Some(MessageReference {
+                    channel_id: Some(channel_id),
+                    message_id: Some(message_id),
+                    ..
+                }) => Some(context.cache.get_message(channel_id, message_id).await?),
                 _ => None,
             };
 
