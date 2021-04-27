@@ -6,7 +6,7 @@ use twilight_model::id::{ChannelId, GuildId, UserId};
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
-use crate::cache::{Cache, CachedMessage};
+use crate::cache::{Cache, CachedMessage, CachedUser};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum InteractionType {
@@ -21,6 +21,7 @@ pub struct Interaction {
     pub guild: GuildId,
     pub channel: ChannelId,
     pub source: UserId,
+    pub source_is_bot: bool,
     pub target: Option<UserId>,
     pub other_targets: Vec<UserId>,
 }
@@ -54,12 +55,17 @@ impl Interaction {
             guild: guild_id,
             channel: message.channel_id,
             source: message.author.id,
+            source_is_bot: message.author.bot,
             target: reply_to,
             other_targets: user_mentions,
         })
     }
 
-    pub fn new_from_reaction(reaction: &Reaction, target_message: &CachedMessage) -> Result<Self> {
+    pub fn new_from_reaction(
+        reaction: &Reaction,
+        user: &CachedUser,
+        target_message: &CachedMessage,
+    ) -> Result<Self> {
         let guild_id = reaction
             .guild_id
             .context("tried to create an interaction from a reaction not sent to a guild")?;
@@ -70,6 +76,7 @@ impl Interaction {
             guild: guild_id,
             channel: reaction.channel_id,
             source: reaction.user_id,
+            source_is_bot: user.bot,
             target: Some(target_message.author_id),
             other_targets: Vec::new(),
         })
@@ -137,7 +144,7 @@ pub enum RelationshipChangeReason {
 // TODO: I think this needs to be based on the total number of nodes in the graph.
 //       AlliedModders seems to be decaying a bit quick, while Together C & C++ is not quite there.
 pub const RELATIONSHIP_DECAY: RelationshipStrength = -0.02;
-pub const RELATIONSHIP_DECAY_GLOBAL: RelationshipStrength = -0.002;
+pub const RELATIONSHIP_DECAY_GLOBAL: RelationshipStrength = -0.0002;
 
 impl RelationshipChangeReason {
     pub fn get_change_strength(&self) -> RelationshipStrength {

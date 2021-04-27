@@ -19,7 +19,7 @@ use super::inference::{
 };
 use crate::cache::CachedMember;
 use crate::context::Context;
-use crate::social::inference::RELATIONSHIP_DECAY_GLOBAL;
+use crate::social::inference::{InteractionType, RELATIONSHIP_DECAY_GLOBAL};
 
 // TODO: This doesn't handle counting wide characters very well,
 //       Probably want to pull in the unicode-width crate for that.
@@ -474,9 +474,11 @@ impl SocialGraph {
         let channel_id = interaction.channel;
 
         // Decay all of the guild channel's graphs a tiny bit.
-        if let Some(guild_graphs) = self.graph.get_mut(&guild_id) {
-            for graph in guild_graphs.values_mut() {
-                graph.decay(RELATIONSHIP_DECAY_GLOBAL);
+        if interaction.what == InteractionType::Message && !interaction.source_is_bot {
+            if let Some(guild_graphs) = self.graph.get_mut(&guild_id) {
+                for graph in guild_graphs.values_mut() {
+                    graph.decay(RELATIONSHIP_DECAY_GLOBAL);
+                }
             }
         }
 
