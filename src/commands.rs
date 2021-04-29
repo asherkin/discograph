@@ -13,6 +13,7 @@ use twilight_model::id::GuildId;
 use std::process::Stdio;
 
 use crate::context::Context;
+use crate::social::graph::ColorScheme;
 
 pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
     match event {
@@ -49,7 +50,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
 
     let result = match command.name {
         "help" | "invite" => command_help(context, message).await,
-        "graph" => command_graph(context, message).await,
+        "graph" => command_graph(context, message, command.arguments).await,
         "stats" => command_stats(context, message).await,
         "dump" => command_dump(context, message, command.arguments).await,
         _ => Ok(()),
@@ -61,7 +62,10 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         context
             .http
             .create_message(message.channel_id)
-            .content("Sorry, there was an error handling that command")?
+            .content(format!(
+                "Sorry, there was an error handling that command :warning:\n```\n{}\n```",
+                error
+            ))?
             .await?;
     }
 
@@ -79,8 +83,8 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
         inline: false,
         name: "Commands".to_string(),
         value: vec![
-            "` help  `\u{2000}This message.",
-            "` graph `\u{2000}Get a preview-quality graph image.",
+            "` help               `\u{2000}This message.",
+            "` graph [light|dark] `\u{2000}Get a preview-quality graph image.",
         ]
         .join("\n"),
     };
@@ -133,11 +137,27 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
     Ok(())
 }
 
-async fn command_graph(context: &Context, message: &Message) -> Result<()> {
+async fn command_graph(
+    context: &Context,
+    message: &Message,
+    mut arguments: Arguments<'_>,
+) -> Result<()> {
     // TODO: Respond to the command on errors.
 
     let guild_id = message.guild_id.context("message not to guild")?;
     let guild_name = context.cache.get_guild(guild_id).await?.name;
+
+    let color_scheme = match arguments.next() {
+        Some("light") => ColorScheme::Light,
+        Some("dark") => ColorScheme::Dark,
+        Some(value) => anyhow::bail!(
+            "{} is not a recognized color scheme, expected \"light\" or \"dark\"",
+            value,
+        ),
+        None => ColorScheme::Dark,
+    };
+
+    let transparent = matches!(arguments.next(), Some("transparent"));
 
     let graph = {
         let social = context.social.lock();
@@ -148,10 +168,22 @@ async fn command_graph(context: &Context, message: &Message) -> Result<()> {
     };
 
     let dot = graph
-        .to_dot(context, guild_id, Some(&message.author))
+        .to_dot(
+            context,
+            guild_id,
+            Some(&message.author),
+            color_scheme,
+            transparent,
+        )
         .await?;
 
     let png = render_dot(&dot).await?;
+
+    let png = if transparent {
+        add_png_shadow(&png, color_scheme).await?
+    } else {
+        png
+    };
 
     context
         .http
@@ -199,7 +231,9 @@ async fn command_dump(
                 .context("no graph for guild")?
         };
 
-        let dot = graph.to_dot(context, guild_id, None).await?;
+        let dot = graph
+            .to_dot(context, guild_id, None, ColorScheme::Light, false)
+            .await?;
 
         let png = render_dot(&dot).await?;
 
@@ -259,6 +293,48 @@ async fn render_dot(dot: &str) -> Result<Vec<u8>> {
 
     if !output.status.success() {
         anyhow::bail!("graphviz failed");
+    }
+
+    Ok(output.stdout)
+}
+
+async fn add_png_shadow(input: &[u8], color_scheme: ColorScheme) -> Result<Vec<u8>> {
+    let background_color = match color_scheme {
+        ColorScheme::Light => 0xFFFFFF,
+        ColorScheme::Dark => 0x36393F,
+    };
+
+    let mut convert = process::Command::new("convert")
+        .arg("png:-")
+        .arg("-background")
+        .arg("none")
+        .arg("(")
+        .arg("+clone")
+        .arg("-background")
+        .arg(format!("#{:06X}", background_color))
+        .arg("-shadow")
+        .arg("200x2+0+0")
+        .arg(")")
+        .arg("-background")
+        .arg("none")
+        .arg("-compose")
+        .arg("DstOver")
+        .arg("-flatten")
+        .arg("png:-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    {
+        let stdin = convert.stdin.as_mut().unwrap();
+        stdin.write_all(input).await?;
+    }
+
+    let output = convert.wait_with_output().await?;
+
+    if !output.status.success() {
+        anyhow::bail!("convert failed");
     }
 
     Ok(output.stdout)

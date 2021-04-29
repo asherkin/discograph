@@ -61,14 +61,12 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
             process_interaction(context, interaction).await;
         }
         ReactionAdd(reaction) if reaction.user_id != context.user.id => {
-            let user = context.cache.get_user(reaction.user_id).await?;
-
             let message = context
                 .cache
                 .get_message(reaction.channel_id, reaction.message_id)
                 .await?;
 
-            let interaction = Interaction::new_from_reaction(reaction, &user, &message)?;
+            let interaction = Interaction::new_from_reaction(reaction, &message)?;
             process_interaction(context, interaction).await;
         }
         _ => (),

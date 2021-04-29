@@ -6,7 +6,7 @@ use twilight_model::id::{ChannelId, GuildId, UserId};
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
-use crate::cache::{Cache, CachedMessage, CachedUser};
+use crate::cache::{Cache, CachedMessage};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum InteractionType {
@@ -61,14 +61,16 @@ impl Interaction {
         })
     }
 
-    pub fn new_from_reaction(
-        reaction: &Reaction,
-        user: &CachedUser,
-        target_message: &CachedMessage,
-    ) -> Result<Self> {
+    pub fn new_from_reaction(reaction: &Reaction, target_message: &CachedMessage) -> Result<Self> {
         let guild_id = reaction
             .guild_id
             .context("tried to create an interaction from a reaction not sent to a guild")?;
+
+        let user = &reaction
+            .member
+            .as_ref()
+            .context("member info missing from reaction")?
+            .user;
 
         Ok(Interaction {
             what: InteractionType::Reaction,

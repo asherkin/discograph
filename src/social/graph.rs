@@ -53,6 +53,12 @@ fn calculate_luma(color: u32) -> f32 {
     (r * 0.299) + (g * 0.587) + (b * 0.114)
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ColorScheme {
+    Light,
+    Dark,
+}
+
 #[derive(Clone, Debug)]
 pub struct UserRelationshipGraphMap(HashMap<(UserId, UserId), RelationshipStrength>);
 
@@ -101,6 +107,8 @@ impl UserRelationshipGraphMap {
         context: &Context,
         guild_id: GuildId,
         requesting_user: Option<&User>,
+        color_scheme: ColorScheme,
+        transparent: bool,
     ) -> AnyhowResult<String> {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
@@ -227,17 +235,36 @@ impl UserRelationshipGraphMap {
             anyhow::bail!("Not enough users to create a graph");
         }
 
-        let fontname = "Noto Sans Display, Noto Emoji";
+        const FONT_NAME: &str = "Noto Sans Display, Noto Emoji";
 
-        let mut lines = Vec::with_capacity(12 + user_weights.len() + undirected_edges.len() + 1);
+        const BG_LIGHT: u32 = 0xFFFFFF;
+        const FG_LIGHT: u32 = 0x060607;
+        const BG_DARK: u32 = 0x36393F;
+        const FG_DARK: u32 = 0xFFFFFF;
+
+        let (bg_color, fg_color) = match color_scheme {
+            ColorScheme::Light => (BG_LIGHT, FG_LIGHT),
+            ColorScheme::Dark => (BG_DARK, FG_DARK),
+        };
+
+        let mut lines = Vec::with_capacity(16 + user_weights.len() + undirected_edges.len() + 1);
 
         lines.push(String::from("graph {"));
+        lines.push(String::from("    dpi = \"144\""));
         lines.push(String::from("    pad = \"0.3\""));
         lines.push(String::from("    layout = \"fdp\""));
         lines.push(String::from("    K = \"0.1\""));
         lines.push(String::from("    splines = \"true\""));
         lines.push(String::from("    overlap = \"30:true\""));
         lines.push(String::from("    outputorder = \"edgesfirst\""));
+        lines.push(format!("    color = \"#{:06X}\"", fg_color));
+        lines.push(format!("    fontcolor = \"#{:06X}\"", fg_color));
+
+        if transparent {
+            lines.push(String::from("    bgcolor = \"transparent\""));
+        } else {
+            lines.push(format!("    bgcolor = \"#{:06X}\"", bg_color));
+        }
 
         if let Some(user) = requesting_user {
             let guild = context.cache.get_guild(guild_id).await?;
@@ -268,10 +295,10 @@ impl UserRelationshipGraphMap {
             lines.push(format!("    label = \"{}\"", label));
             lines.push(String::from("    labelloc = \"bottom\""));
             lines.push(String::from("    labeljust = \"left\""));
-            lines.push(format!("    fontname = \"{}\"", fontname));
+            lines.push(format!("    fontname = \"{}\"", FONT_NAME));
         }
 
-        lines.push(format!("    node [ fontname = \"{}\" ]", fontname));
+        lines.push(format!("    node [ fontname = \"{}\" ]", FONT_NAME));
 
         for (user_id, weight) in &user_weights {
             let (name, role_color) = names_and_colors.get(user_id).unwrap().clone();
@@ -286,14 +313,10 @@ impl UserRelationshipGraphMap {
                 .replace(">", "&gt;")
                 .replace("\\", "\\\\");
 
-            // TODO: Consider adding a color helper struct.
-            const BLACK: u32 = 0;
-            const WHITE: u32 = 16777215;
-
             let mut peripheries = 1;
-            let mut color = BLACK;
-            let mut fillcolor = WHITE;
-            let mut fontcolor = BLACK;
+            let mut color = fg_color;
+            let mut fillcolor = bg_color;
+            let mut fontcolor = fg_color;
 
             if let Some(role_color) = role_color {
                 color = role_color;
@@ -311,9 +334,9 @@ impl UserRelationshipGraphMap {
 
                     // Select text color based on fill contrast.
                     fontcolor = if calculate_luma(fillcolor) > 186.0 {
-                        BLACK
+                        FG_LIGHT
                     } else {
-                        WHITE
+                        FG_DARK
                     };
                 }
             }
@@ -333,8 +356,8 @@ impl UserRelationshipGraphMap {
         for (key, weight) in undirected_edges {
             let width = 1.0 + weight.log10();
             lines.push(format!(
-                "    {} -- {} [ weight = \"{}\", penwidth = \"{}\" ]",
-                key[0], key[1], weight, width,
+                "    {} -- {} [ weight = \"{}\", penwidth = \"{}\", color = \"#{:06X}\" ]",
+                key[0], key[1], weight, width, fg_color,
             ));
         }
 
