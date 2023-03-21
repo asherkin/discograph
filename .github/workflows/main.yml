@@ -42,31 +42,20 @@ jobs:
             rustflags: -D warnings
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
           components: rustfmt, clippy
 
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --all --all-targets --target=${{ matrix.target }}
+      - run: cargo build --all --all-targets --target=${{ matrix.target }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all --all-targets --target=${{ matrix.target }} -- -D warnings
+          
+      - run: cargo fmt --all -- --check
+      
+      - run: cargo clippy --all --all-targets --target=${{ matrix.target }} -- -D warnings
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
