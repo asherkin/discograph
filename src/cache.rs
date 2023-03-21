@@ -4,22 +4,27 @@ use parking_lot::Mutex;
 use tracing::{debug, info};
 use twilight_http::Client;
 use twilight_model::channel::message::{Mention, MessageType};
-use twilight_model::channel::permission_overwrite::PermissionOverwrite;
-use twilight_model::channel::{Channel, ChannelType, GuildChannel, Message, TextChannel};
+use twilight_model::channel::{Channel, ChannelType, Message};
 use twilight_model::gateway::event::Event;
-use twilight_model::gateway::payload::{MemberUpdate, MessageUpdate};
+use twilight_model::gateway::payload::incoming::{MemberUpdate, MessageUpdate};
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
-use twilight_model::id::{ChannelId, GuildId, MessageId, RoleId, UserId};
+use twilight_model::id::marker::{
+    ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
+};
+use twilight_model::id::Id;
 use twilight_model::user::User;
+use twilight_model::util::ImageHash;
 
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct CachedUser {
-    pub id: UserId,
+    pub id: Id<UserMarker>,
     pub name: String,
     pub discriminator: u16,
-    pub avatar: Option<String>,
+    pub avatar: Option<ImageHash>,
     pub bot: bool,
 }
 
@@ -28,9 +33,8 @@ impl From<&User> for CachedUser {
         CachedUser {
             id: user.id,
             name: user.name.clone(),
-            // TODO: Decide if we want to switch to storing a String here
-            discriminator: user.discriminator.parse().unwrap(),
-            avatar: user.avatar.clone(),
+            discriminator: user.discriminator,
+            avatar: user.avatar,
             bot: user.bot,
         }
     }
@@ -41,9 +45,8 @@ impl From<&Mention> for CachedUser {
         CachedUser {
             id: mention.id,
             name: mention.name.clone(),
-            // TODO: Decide if we want to switch to storing a String here
-            discriminator: mention.discriminator.parse().unwrap(),
-            avatar: mention.avatar.clone(),
+            discriminator: mention.discriminator,
+            avatar: mention.avatar,
             bot: mention.bot,
         }
     }
@@ -51,11 +54,11 @@ impl From<&Mention> for CachedUser {
 
 #[derive(Debug, Clone)]
 pub struct CachedGuild {
-    pub id: GuildId,
+    pub id: Id<GuildMarker>,
     pub name: String,
-    pub icon: Option<String>,
-    pub roles: Vec<RoleId>,
-    pub owner_id: UserId,
+    pub icon: Option<ImageHash>,
+    pub roles: Vec<Id<RoleMarker>>,
+    pub owner_id: Id<UserMarker>,
 }
 
 impl From<&PartialGuild> for CachedGuild {
@@ -63,7 +66,7 @@ impl From<&PartialGuild> for CachedGuild {
         CachedGuild {
             id: guild.id,
             name: guild.name.clone(),
-            icon: guild.icon.clone(),
+            icon: guild.icon,
             roles: guild.roles.iter().map(|role| role.id).collect(),
             owner_id: guild.owner_id,
         }
@@ -75,7 +78,7 @@ impl From<&Guild> for CachedGuild {
         CachedGuild {
             id: guild.id,
             name: guild.name.clone(),
-            icon: guild.icon.clone(),
+            icon: guild.icon,
             roles: guild.roles.iter().map(|role| role.id).collect(),
             owner_id: guild.owner_id,
         }
@@ -84,7 +87,7 @@ impl From<&Guild> for CachedGuild {
 
 #[derive(Debug, Clone)]
 pub struct CachedRole {
-    pub id: RoleId,
+    pub id: Id<RoleMarker>,
     pub name: String,
     pub color: u32,
     pub position: i64,
@@ -106,7 +109,7 @@ impl From<&Role> for CachedRole {
 #[derive(Debug, Clone)]
 pub struct CachedMember {
     pub nick: Option<String>,
-    pub roles: Vec<RoleId>,
+    pub roles: Vec<Id<RoleMarker>>,
 }
 
 impl From<&PartialMember> for CachedMember {
@@ -138,26 +141,27 @@ impl From<&MemberUpdate> for CachedMember {
 
 #[derive(Debug, Clone)]
 pub struct CachedChannel {
-    pub id: ChannelId,
+    pub id: Id<ChannelMarker>,
     pub name: String,
     pub kind: ChannelType,
-    pub permission_overwrites: Vec<PermissionOverwrite>,
 }
 
-impl From<&TextChannel> for CachedChannel {
-    fn from(channel: &TextChannel) -> Self {
+impl From<&Channel> for CachedChannel {
+    fn from(channel: &Channel) -> Self {
         CachedChannel {
             id: channel.id,
-            name: channel.name.clone(),
+            name: channel.name.as_ref().map_or_else(
+                || format!("{:?}:{}", channel.kind, channel.id),
+                |name| name.clone(),
+            ),
             kind: channel.kind,
-            permission_overwrites: channel.permission_overwrites.clone(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct CachedMessage {
-    pub author_id: UserId,
+    pub author_id: Id<UserMarker>,
     pub kind: MessageType,
 }
 
@@ -174,15 +178,16 @@ impl From<&Message> for CachedMessage {
 //       all active objects. Investigate more once we have the GraphMap implemented.
 //       A bonus of non-LRU maps here would be the ability to use RwLock.
 // TODO: Rewrite this to be partitioned per-guild.
+#[allow(clippy::type_complexity)]
 pub struct Cache {
-    http: Client,
-    users: Mutex<LruCache<UserId, CachedUser>>,
-    guilds: Mutex<LruCache<GuildId, CachedGuild>>,
-    roles: Mutex<LruCache<RoleId, CachedRole>>,
-    members: Mutex<LruCache<(GuildId, UserId), CachedMember>>,
-    channels: Mutex<LruCache<ChannelId, CachedChannel>>,
+    http: Arc<Client>,
+    users: Mutex<LruCache<Id<UserMarker>, CachedUser>>,
+    guilds: Mutex<LruCache<Id<GuildMarker>, CachedGuild>>,
+    roles: Mutex<LruCache<Id<RoleMarker>, CachedRole>>,
+    members: Mutex<LruCache<(Id<GuildMarker>, Id<UserMarker>), CachedMember>>,
+    channels: Mutex<LruCache<Id<ChannelMarker>, CachedChannel>>,
     /// Used to lookup the author of messages being reacted to.
-    messages: Mutex<LruCache<MessageId, CachedMessage>>,
+    messages: Mutex<LruCache<Id<MessageMarker>, CachedMessage>>,
 }
 
 /// A newtype to wrap LruCache, as LruCache's Debug impl doesn't print the container contents.
@@ -216,6 +221,7 @@ impl fmt::Debug for Cache {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
 pub struct CacheStats {
     users: usize,
     guilds: usize,
@@ -228,18 +234,18 @@ pub struct CacheStats {
 // The `get_*` functions in here release the lock while processing in order to support async in
 // the future, and a potential switch to RwLock if we move away from LruCache.
 impl Cache {
-    pub fn new(http: Client) -> Self {
+    pub fn new(http: Arc<Client>) -> Self {
         // TODO: Tune these cache sizes.
-        const CACHE_LIMIT: usize = 5000;
+        let cache_limit = NonZeroUsize::new(5000).unwrap();
 
         Cache {
             http,
-            users: Mutex::new(LruCache::new(CACHE_LIMIT)),
-            guilds: Mutex::new(LruCache::new(CACHE_LIMIT)),
-            roles: Mutex::new(LruCache::new(CACHE_LIMIT)),
-            members: Mutex::new(LruCache::new(CACHE_LIMIT)),
-            channels: Mutex::new(LruCache::new(CACHE_LIMIT)),
-            messages: Mutex::new(LruCache::new(CACHE_LIMIT)),
+            users: Mutex::new(LruCache::new(cache_limit)),
+            guilds: Mutex::new(LruCache::new(cache_limit)),
+            roles: Mutex::new(LruCache::new(cache_limit)),
+            members: Mutex::new(LruCache::new(cache_limit)),
+            channels: Mutex::new(LruCache::new(cache_limit)),
+            messages: Mutex::new(LruCache::new(cache_limit)),
         }
     }
 
@@ -256,30 +262,22 @@ impl Cache {
 
     pub fn update(&self, event: &Event) {
         match event {
-            Event::ChannelCreate(channel) => {
-                if let Channel::Guild(GuildChannel::Text(channel)) = &channel.0 {
-                    self.put_channel(&channel)
-                }
-            }
-            Event::ChannelUpdate(channel) => {
-                if let Channel::Guild(GuildChannel::Text(channel)) = &channel.0 {
-                    self.put_channel(&channel)
-                }
-            }
-            Event::GuildCreate(guild) => self.put_full_guild(&guild),
-            Event::GuildUpdate(guild) => self.put_guild(&guild),
-            Event::MemberAdd(member) => self.put_full_member(&member),
-            Event::MemberUpdate(member) => self.put_member_update(&member),
+            Event::ChannelCreate(channel) => self.put_channel(channel),
+            Event::ChannelUpdate(channel) => self.put_channel(channel),
+            Event::GuildCreate(guild) => self.put_full_guild(guild),
+            Event::GuildUpdate(guild) => self.put_guild(guild),
+            Event::MemberAdd(member) => self.put_full_member(member.guild_id, member),
+            Event::MemberUpdate(member) => self.put_member_update(member),
             Event::MemberChunk(chunk) => {
                 for member in &chunk.members {
-                    self.put_full_member(member)
+                    self.put_full_member(chunk.guild_id, member)
                 }
             }
-            Event::MessageCreate(message) => self.put_message(&message),
-            Event::MessageUpdate(message) => self.put_message_update(&message),
+            Event::MessageCreate(message) => self.put_message(message),
+            Event::MessageUpdate(message) => self.put_message_update(message),
             Event::ReactionAdd(reaction) => {
-                if let Some(member) = &reaction.member {
-                    self.put_full_member(member);
+                if let (Some(guild_id), Some(member)) = (reaction.guild_id, &reaction.member) {
+                    self.put_full_member(guild_id, member);
                 }
             }
             Event::RoleCreate(role) => self.put_role(&role.role),
@@ -300,7 +298,7 @@ impl Cache {
         cache.put(mention.id, CachedUser::from(mention));
     }
 
-    pub async fn get_user(&self, user_id: UserId) -> Result<CachedUser> {
+    pub async fn get_user(&self, user_id: Id<UserMarker>) -> Result<CachedUser> {
         let cached_user = {
             let mut cache = self.users.lock();
             cache.get(&user_id).cloned()
@@ -311,11 +309,7 @@ impl Cache {
             None => {
                 info!("user {} not in cache, fetching", user_id);
 
-                let user = self
-                    .http
-                    .user(user_id)
-                    .await?
-                    .context("user does not exist")?;
+                let user = self.http.user(user_id).await?.model().await?;
 
                 self.put_user(&user);
 
@@ -335,11 +329,7 @@ impl Cache {
 
     fn put_full_guild(&self, guild: &Guild) {
         for channel in &guild.channels {
-            if let GuildChannel::Text(channel) = channel {
-                if channel.kind == ChannelType::GuildText {
-                    self.put_channel(&channel);
-                }
-            }
+            self.put_channel(channel);
         }
 
         for role in &guild.roles {
@@ -350,7 +340,7 @@ impl Cache {
         cache.put(guild.id, CachedGuild::from(guild));
     }
 
-    pub async fn get_guild(&self, guild_id: GuildId) -> Result<CachedGuild> {
+    pub async fn get_guild(&self, guild_id: Id<GuildMarker>) -> Result<CachedGuild> {
         let cached_guild = {
             let mut cache = self.guilds.lock();
             cache.get(&guild_id).cloned()
@@ -361,11 +351,7 @@ impl Cache {
             None => {
                 info!("guild {} not in cache, fetching", guild_id);
 
-                let guild = self
-                    .http
-                    .guild(guild_id)
-                    .await?
-                    .context("guild does not exist")?;
+                let guild = self.http.guild(guild_id).await?.model().await?;
 
                 self.put_full_guild(&guild);
 
@@ -379,7 +365,11 @@ impl Cache {
         cache.put(role.id, CachedRole::from(role));
     }
 
-    pub async fn get_role(&self, guild_id: GuildId, role_id: RoleId) -> Result<CachedRole> {
+    pub async fn get_role(
+        &self,
+        guild_id: Id<GuildMarker>,
+        role_id: Id<RoleMarker>,
+    ) -> Result<CachedRole> {
         let cached_role = {
             let mut cache = self.roles.lock();
             cache.get(&role_id).cloned()
@@ -390,7 +380,7 @@ impl Cache {
             None => {
                 info!("role {} not in cache, fetching", role_id);
 
-                let roles = self.http.roles(guild_id).await?;
+                let roles = self.http.roles(guild_id).await?.model().await?;
 
                 for role in &roles {
                     self.put_role(role);
@@ -406,19 +396,21 @@ impl Cache {
         }
     }
 
-    fn put_member(&self, guild_id: GuildId, user_id: UserId, member: &PartialMember) {
+    fn put_member(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        member: &PartialMember,
+    ) {
         let mut cache = self.members.lock();
         cache.put((guild_id, user_id), CachedMember::from(member));
     }
 
-    fn put_full_member(&self, member: &Member) {
+    fn put_full_member(&self, guild_id: Id<GuildMarker>, member: &Member) {
         self.put_user(&member.user);
 
         let mut cache = self.members.lock();
-        cache.put(
-            (member.guild_id, member.user.id),
-            CachedMember::from(member),
-        );
+        cache.put((guild_id, member.user.id), CachedMember::from(member));
     }
 
     fn put_member_update(&self, member: &MemberUpdate) {
@@ -431,7 +423,11 @@ impl Cache {
         );
     }
 
-    pub async fn get_member(&self, guild_id: GuildId, user_id: UserId) -> Result<CachedMember> {
+    pub async fn get_member(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Result<CachedMember> {
         let cached_member = {
             let mut cache = self.members.lock();
             cache.get(&(guild_id, user_id)).cloned()
@@ -449,21 +445,22 @@ impl Cache {
                     .http
                     .guild_member(guild_id, user_id)
                     .await?
-                    .context("member does not exist")?;
+                    .model()
+                    .await?;
 
-                self.put_full_member(&member);
+                self.put_full_member(guild_id, &member);
 
                 Ok(CachedMember::from(&member))
             }
         }
     }
 
-    fn put_channel(&self, channel: &TextChannel) {
+    fn put_channel(&self, channel: &Channel) {
         let mut cache = self.channels.lock();
         cache.put(channel.id, CachedChannel::from(channel));
     }
 
-    pub async fn get_channel(&self, channel_id: ChannelId) -> Result<CachedChannel> {
+    pub async fn get_channel(&self, channel_id: Id<ChannelMarker>) -> Result<CachedChannel> {
         let cached_channel = {
             let mut cache = self.channels.lock();
             cache.get(&channel_id).cloned()
@@ -474,20 +471,11 @@ impl Cache {
             None => {
                 info!("channel {} not in cache, fetching", channel_id);
 
-                let channel = self
-                    .http
-                    .channel(channel_id)
-                    .await?
-                    .context("channel does not exist")?;
+                let channel = self.http.channel(channel_id).await?.model().await?;
 
-                match channel {
-                    Channel::Guild(GuildChannel::Text(channel)) => {
-                        self.put_channel(&channel);
+                self.put_channel(&channel);
 
-                        Ok(CachedChannel::from(&channel))
-                    }
-                    _ => anyhow::bail!("not a guild text channel"),
-                }
+                Ok(CachedChannel::from(&channel))
             }
         }
     }
@@ -518,14 +506,13 @@ impl Cache {
         }
 
         if let Some(mentions) = &message.mentions {
-            for user in mentions {
-                self.put_user(user);
+            for mention in mentions {
+                self.put_user_mention(mention);
 
                 // We can't do this in `put_user_mention` as it needs the guild ID.
-                // TODO: MessageUpdate::mentions hasn't been updated to Vec<Mention>
-                // if let (Some(guild_id), Some(member)) = (message.guild_id, &mentioned_user.member) {
-                //     self.put_member(guild_id, mentioned_user.id, member);
-                // }
+                if let (Some(guild_id), Some(member)) = (message.guild_id, &mention.member) {
+                    self.put_member(guild_id, mention.id, member);
+                }
             }
         }
 
@@ -543,8 +530,8 @@ impl Cache {
 
     pub async fn get_message(
         &self,
-        channel_id: ChannelId,
-        message_id: MessageId,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
     ) -> Result<CachedMessage> {
         let cached_message = {
             let mut cache = self.messages.lock();
@@ -560,7 +547,8 @@ impl Cache {
                     .http
                     .message(channel_id, message_id)
                     .await?
-                    .context("message does not exist")?;
+                    .model()
+                    .await?;
 
                 self.put_message(&message);
 

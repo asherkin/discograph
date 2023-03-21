@@ -4,21 +4,23 @@ mod context;
 mod social;
 
 use anyhow::{Context as AnyhowContext, Result};
-use futures::StreamExt;
 use parking_lot::Mutex;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::Connection;
-use tracing::{debug, error, info};
-use twilight_gateway::{cluster::Cluster, Event};
+use tracing::{debug, error, info, warn};
+use twilight_gateway::{Config, Event, Shard};
 use twilight_http::{Client as HttpClient, Client};
-use twilight_model::gateway::presence::ActivityType;
-use twilight_model::gateway::Intents;
-use twilight_model::id::UserId;
+use twilight_model::gateway::payload::outgoing::UpdatePresence;
+use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
+use twilight_model::gateway::{CloseFrame, Intents, ShardId};
+use twilight_model::id::marker::UserMarker;
+use twilight_model::id::Id;
 use twilight_model::oauth::team::TeamMembershipState;
 
 use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::cache::Cache;
@@ -42,7 +44,7 @@ async fn main() -> Result<()> {
         debug!("DATABASE_URL set, connecting to database");
 
         let pool = MySqlPoolOptions::new()
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .acquire_timeout(std::time::Duration::from_secs(5))
             .test_before_acquire(false)
             .connect(&url)
             .await?;
@@ -68,10 +70,10 @@ async fn main() -> Result<()> {
     let token = get_optional_env("DISCORD_TOKEN").context("missing discord bot token")?;
 
     // HTTP is separate from the gateway, so create a new client.
-    let http = HttpClient::new(&token);
+    let http = Arc::new(HttpClient::new(token.clone()));
 
     // Just block on these, it simplifies the startup logic.
-    let user = Arc::new(http.current_user().await?);
+    let user = Arc::new(http.current_user().await?.model().await?);
     let owners = Arc::new(get_application_owners(&http).await?);
 
     let cache = Arc::new(Cache::new(http.clone()));
@@ -79,34 +81,77 @@ async fn main() -> Result<()> {
     let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
     let social = Arc::new(Mutex::new(SocialGraph::new(data_dir)));
 
+    let intents = Intents::GUILDS
+        | Intents::GUILD_MESSAGES
+        | Intents::GUILD_MESSAGE_REACTIONS
+        | Intents::MESSAGE_CONTENT;
+
+    let config = Config::new(token, intents);
+
     // Configure gateway connection.
-    let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::GUILD_MESSAGE_REACTIONS;
-    let cluster = Cluster::builder(&token, intents).build().await?;
+    // TODO: Bring back multiple shards.
+    let mut shard = Shard::with_config(ShardId::ONE, config);
 
-    // Start all shards in the cluster in the background.
-    // This *must* be after any other awaits, otherwise we can lose events.
-    let cluster_spawn = cluster.clone();
-    tokio::spawn(async move {
-        cluster_spawn.up().await;
-    });
+    let shutdown = Arc::new(AtomicBool::new(false));
 
-    let cluster_down = cluster.clone();
+    let shutdown_clone = shutdown.clone();
     ctrlc::set_handler(move || {
         info!("ctrlc handler called");
 
-        cluster_down.down();
+        shutdown_clone.store(true, Ordering::Relaxed);
     })?;
 
-    let mut events = cluster.events();
+    let mut close_sent = false;
 
-    // Process each event as they come in.
-    while let Some((shard_id, event)) = events.next().await {
+    loop {
+        let event = shard.next_event().await;
+
+        if shutdown.load(Ordering::Relaxed) {
+            if !close_sent {
+                let _ = shard.close(CloseFrame::NORMAL).await;
+                close_sent = true;
+            }
+
+            if let Ok(Event::GatewayClose(_)) = event {
+                // Calling next_event() after GatewayClose will reconnect.
+                break;
+            }
+        }
+
+        let event = match event {
+            Ok(event) => event,
+            Err(source) => {
+                warn!(?source, "error receiving event");
+
+                // An error may be fatal when something like invalid privileged
+                // intents are specified or the Discord token is invalid.
+                if source.is_fatal() {
+                    break;
+                }
+
+                continue;
+            }
+        };
+
         // Drop these early just to clean up some logging for development.
         if let Event::GatewayHeartbeatAck = event {
             continue;
         }
 
-        debug!("received event: {:?}", event);
+        debug!(?event, shard = ?shard.id(), "received event");
+
+        if let Event::Ready(event) = &event {
+            let activity: Activity = MinimalActivity {
+                kind: ActivityType::Watching,
+                name: format!("| @{} help", event.user.name),
+                url: None,
+            }
+            .into();
+
+            let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)?;
+
+            shard.command(&message).await?;
+        }
 
         // Update the cache with the event.
         // Done before we spawn the tasks to ensure the cache is updated.
@@ -115,7 +160,6 @@ async fn main() -> Result<()> {
         let context = Context {
             user: user.clone(),
             owners: owners.clone(),
-            shard: cluster.shard(shard_id).unwrap(),
             http: http.clone(),
             cache: cache.clone(),
             social: social.clone(),
@@ -134,8 +178,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_application_owners(http: &Client) -> Result<HashSet<UserId>> {
-    let info = http.current_user_application().await?;
+async fn get_application_owners(http: &Client) -> Result<HashSet<Id<UserMarker>>> {
+    let info = http.current_user_application().await?.model().await?;
 
     let mut owners = HashSet::new();
 
@@ -145,23 +189,14 @@ async fn get_application_owners(http: &Client) -> Result<HashSet<UserId>> {
                 owners.insert(member.user.id);
             }
         }
-    } else {
-        owners.insert(info.owner.id);
+    } else if let Some(owner) = &info.owner {
+        owners.insert(owner.id);
     }
 
     Ok(owners)
 }
 
 async fn handle_event(context: &Context, event: &Event) -> Result<()> {
-    if let Event::Ready(event) = event {
-        context
-            .set_activity(
-                ActivityType::Watching,
-                format!("| @{} help", event.user.name),
-            )
-            .await?;
-    }
-
     if commands::handle_event(context, event).await? {
         // If the command processor consumed it, don't do any more processing.
         return Ok(());

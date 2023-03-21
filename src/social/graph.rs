@@ -3,7 +3,8 @@ use futures::future::join_all;
 use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use tracing::error;
-use twilight_model::id::{ChannelId, GuildId, UserId};
+use twilight_model::id::marker::{ChannelMarker, GuildMarker, UserMarker};
+use twilight_model::id::Id;
 use twilight_model::user::User;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -60,7 +61,9 @@ pub enum ColorScheme {
 }
 
 #[derive(Clone, Debug)]
-pub struct UserRelationshipGraphMap(HashMap<(UserId, UserId), RelationshipStrength>);
+pub struct UserRelationshipGraphMap(
+    HashMap<(Id<UserMarker>, Id<UserMarker>), RelationshipStrength>,
+);
 
 impl UserRelationshipGraphMap {
     fn new() -> Self {
@@ -105,7 +108,7 @@ impl UserRelationshipGraphMap {
     pub async fn to_dot(
         &self,
         context: &Context,
-        guild_id: GuildId,
+        guild_id: Id<GuildMarker>,
         requesting_user: Option<&User>,
         color_scheme: ColorScheme,
         transparent: bool,
@@ -215,7 +218,7 @@ impl UserRelationshipGraphMap {
         };
 
         // Filter any edges that were to bots or we couldn't lookup and sum per-user weights.
-        let mut user_weights: HashMap<UserId, RelationshipStrength> = HashMap::new();
+        let mut user_weights: HashMap<Id<UserMarker>, RelationshipStrength> = HashMap::new();
         undirected_edges.retain(|[source, target], weight| {
             let retain =
                 names_and_colors.contains_key(source) && names_and_colors.contains_key(target);
@@ -282,9 +285,9 @@ impl UserRelationshipGraphMap {
                 _ => &context.user.name,
             };
 
-            let safe_name = user.name.replace("\\", "\\\\").replace("\"", "\\\"");
-            let safe_nickname = nickname.replace("\\", "\\\\").replace("\"", "\\\"");
-            let safe_guild_name = guild.name.replace("\\", "\\\\").replace("\"", "\\\"");
+            let safe_name = user.name.replace('\\', "\\\\").replace('"', "\\\"");
+            let safe_nickname = nickname.replace('\\', "\\\\").replace('"', "\\\"");
+            let safe_guild_name = guild.name.replace('\\', "\\\\").replace('"', "\\\"");
 
             // TODO: Add a timestamp.
             let label = format!(
@@ -306,12 +309,12 @@ impl UserRelationshipGraphMap {
 
             // TODO: This could be a lot more efficient.
             let mut label = get_label(name.to_owned())
-                .replace("&", "&amp;")
-                .replace("\"", "&quot;")
-                .replace("'", "&#x27;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\\", "\\\\");
+                .replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('\'', "&#x27;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\\', "\\\\");
 
             let mut peripheries = 1;
             let mut color = fg_color;
@@ -368,7 +371,7 @@ impl UserRelationshipGraphMap {
 }
 
 impl std::ops::Deref for UserRelationshipGraphMap {
-    type Target = HashMap<(UserId, UserId), RelationshipStrength>;
+    type Target = HashMap<(Id<UserMarker>, Id<UserMarker>), RelationshipStrength>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -439,7 +442,7 @@ impl<'de> Visitor<'de> for UserRelationshipGraphMapVisitor {
                 return Err(M::Error::custom(err));
             }
 
-            map.insert((UserId(k1), UserId(k2)), value);
+            map.insert((Id::new(k1), Id::new(k2)), value);
         }
 
         Ok(map)
@@ -465,8 +468,8 @@ impl<'de> Deserialize<'de> for UserRelationshipGraphMap {
 #[derive(Debug)]
 pub struct SocialGraph {
     data_dir: Option<PathBuf>,
-    graph: HashMap<GuildId, HashMap<ChannelId, UserRelationshipGraphMap>>,
-    state: HashMap<(GuildId, ChannelId), InferenceState>,
+    graph: HashMap<Id<GuildMarker>, HashMap<Id<ChannelMarker>, UserRelationshipGraphMap>>,
+    state: HashMap<(Id<GuildMarker>, Id<ChannelMarker>), InferenceState>,
 }
 
 impl SocialGraph {
@@ -529,7 +532,7 @@ impl SocialGraph {
     }
 
     // TODO: Do we want to do this on the client-side instead? Probably.
-    pub fn build_guild_graph(&self, guild_id: GuildId) -> Option<UserRelationshipGraphMap> {
+    pub fn build_guild_graph(&self, guild_id: Id<GuildMarker>) -> Option<UserRelationshipGraphMap> {
         let guild = self.graph.get(&guild_id)?;
 
         let mut guild_graph = UserRelationshipGraphMap::new();
@@ -545,14 +548,14 @@ impl SocialGraph {
     }
 
     // TODO: Temporary hack for debug command.
-    pub fn get_all_guild_ids(&self) -> Vec<GuildId> {
+    pub fn get_all_guild_ids(&self) -> Vec<Id<GuildMarker>> {
         self.graph.keys().copied().collect()
     }
 
     pub(crate) fn get_graph(
         &mut self,
-        guild_id: GuildId,
-        channel_id: ChannelId,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
     ) -> &mut UserRelationshipGraphMap {
         let data_dir = self.data_dir.clone();
 
@@ -581,7 +584,7 @@ impl SocialGraph {
             })
     }
 
-    pub fn remove_guild(&mut self, guild_id: GuildId) {
+    pub fn remove_guild(&mut self, guild_id: Id<GuildMarker>) {
         let channels = self.graph.remove(&guild_id);
 
         if let Some(channels) = channels {
@@ -591,7 +594,7 @@ impl SocialGraph {
         }
     }
 
-    pub fn remove_channel(&mut self, guild_id: GuildId, channel_id: ChannelId) {
+    pub fn remove_channel(&mut self, guild_id: Id<GuildMarker>, channel_id: Id<ChannelMarker>) {
         self.state.remove(&(guild_id, channel_id));
 
         if let Some(channels) = self.graph.get_mut(&guild_id) {
@@ -601,8 +604,8 @@ impl SocialGraph {
 
     fn graph_data_file_name(
         data_dir: PathBuf,
-        guild_id: GuildId,
-        channel_id: ChannelId,
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
     ) -> PathBuf {
         let mut file_name = data_dir;
         file_name.push(format!("{}_{}.json", guild_id, channel_id));

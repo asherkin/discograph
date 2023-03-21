@@ -1,7 +1,9 @@
 use anyhow::{Context as AnyhowContext, Result};
 use futures::future::join_all;
-use twilight_model::channel::{Message, Reaction};
-use twilight_model::id::{ChannelId, GuildId, UserId};
+use twilight_model::channel::Message;
+use twilight_model::gateway::payload::incoming::ReactionAdd;
+use twilight_model::id::marker::{ChannelMarker, GuildMarker, UserMarker};
+use twilight_model::id::Id;
 
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
@@ -18,12 +20,12 @@ pub enum InteractionType {
 pub struct Interaction {
     pub what: InteractionType,
     pub when: Instant,
-    pub guild: GuildId,
-    pub channel: ChannelId,
-    pub source: UserId,
+    pub guild: Id<GuildMarker>,
+    pub channel: Id<ChannelMarker>,
+    pub source: Id<UserMarker>,
     pub source_is_bot: bool,
-    pub target: Option<UserId>,
-    pub other_targets: Vec<UserId>,
+    pub target: Option<Id<UserMarker>>,
+    pub other_targets: Vec<Id<UserMarker>>,
 }
 
 impl Interaction {
@@ -61,7 +63,10 @@ impl Interaction {
         })
     }
 
-    pub fn new_from_reaction(reaction: &Reaction, target_message: &CachedMessage) -> Result<Self> {
+    pub fn new_from_reaction(
+        reaction: &ReactionAdd,
+        target_message: &CachedMessage,
+    ) -> Result<Self> {
         let guild_id = reaction
             .guild_id
             .context("tried to create an interaction from a reaction not sent to a guild")?;
@@ -84,7 +89,11 @@ impl Interaction {
         })
     }
 
-    async fn get_user_display_name(cache: &Cache, guild_id: GuildId, user_id: UserId) -> String {
+    async fn get_user_display_name(
+        cache: &Cache,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> String {
         let user = match cache.get_user(user_id).await {
             Ok(user) => user,
             Err(_) => return format!("<invalid user {}>", user_id),
@@ -163,8 +172,8 @@ impl RelationshipChangeReason {
 
 #[derive(Debug)]
 pub struct RelationshipChange {
-    pub source: UserId,
-    pub target: UserId,
+    pub source: Id<UserMarker>,
+    pub target: Id<UserMarker>,
     pub reason: RelationshipChangeReason,
 }
 
@@ -250,7 +259,7 @@ impl InferenceState {
             .history
             .iter()
             .map(|i| i.source)
-            .collect::<HashSet<UserId>>();
+            .collect::<HashSet<Id<UserMarker>>>();
 
         // TODO: This is triggering far too often, especially after the bot first starts.
         //       The original waits for the history list to be full *and* clears it each
@@ -273,7 +282,7 @@ impl InferenceState {
 }
 
 // TODO: This isn't as good as our nom version, something to look at later.
-fn parse_direct_mention(message: &str) -> Option<UserId> {
+fn parse_direct_mention(message: &str) -> Option<Id<UserMarker>> {
     let message = match message.rfind("\n>") {
         Some(v) => message.get((v + 2)..)?,
         None => message,
@@ -296,31 +305,32 @@ fn parse_direct_mention(message: &str) -> Option<UserId> {
 
     let id = message.get(start..end)?;
 
-    Some(UserId(id.parse().ok()?))
+    Id::new_checked(id.parse().ok()?)
 }
 
 #[cfg(test)]
 mod parse_direct_mention_tests {
-    use super::{parse_direct_mention, UserId};
+    use super::parse_direct_mention;
+    use twilight_model::id::Id;
 
     #[test]
     fn test_simple() {
         let message = "<@!766407857851072512> hello";
         let mention = parse_direct_mention(message);
-        assert_eq!(mention, Some(UserId(766407857851072512)));
+        assert_eq!(mention, Some(Id::new(766407857851072512)));
     }
 
     #[test]
     fn test_quoted() {
         let message = "> <@!766407857851072512> hello\n<@298220148647526402> test";
         let mention = parse_direct_mention(message);
-        assert_eq!(mention, Some(UserId(298220148647526402)));
+        assert_eq!(mention, Some(Id::new(298220148647526402)));
     }
 
     #[test]
     fn test_multi_quote() {
         let message = "> test\n> test\n<@!766407857851072512> test";
         let mention = parse_direct_mention(message);
-        assert_eq!(mention, Some(UserId(766407857851072512)));
+        assert_eq!(mention, Some(Id::new(766407857851072512)));
     }
 }

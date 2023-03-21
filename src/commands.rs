@@ -4,13 +4,14 @@ use tokio::io::AsyncWriteExt;
 use tokio::process;
 use tracing::{debug, error, info};
 use twilight_command_parser::{Arguments, CommandParserConfig, Parser};
-use twilight_model::channel::embed::{Embed, EmbedField, EmbedFooter};
+use twilight_model::channel::message::embed::{Embed, EmbedField, EmbedFooter};
 use twilight_model::channel::Message;
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::MessageCreate;
-use twilight_model::id::GuildId;
+use twilight_model::id::Id;
 
 use std::process::Stdio;
+use twilight_model::http::attachment::Attachment;
 
 use crate::context::Context;
 use crate::social::graph::ColorScheme;
@@ -62,7 +63,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         context
             .http
             .create_message(message.channel_id)
-            .content(format!(
+            .content(&format!(
                 "Sorry, there was an error handling that command :warning:\n```\n{}\n```",
                 error
             ))?
@@ -131,7 +132,7 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
     context
         .http
         .create_message(message.channel_id)
-        .embed(embed)?
+        .embeds(&[embed])?
         .await?;
 
     Ok(())
@@ -188,7 +189,11 @@ async fn command_graph(
     context
         .http
         .create_message(message.channel_id)
-        .attachment(format!("{}.png", guild_name), png)
+        .attachments(&[Attachment::from_bytes(
+            format!("{}.png", guild_name),
+            png,
+            0,
+        )])?
         .await?;
 
     Ok(())
@@ -198,7 +203,7 @@ async fn command_stats(context: &Context, message: &Message) -> Result<()> {
     context
         .http
         .create_message(message.channel_id)
-        .content(format!("{:?}", context.cache.get_stats()))?
+        .content(&format!("{:?}", context.cache.get_stats()))?
         .await?;
 
     Ok(())
@@ -219,7 +224,7 @@ async fn command_dump(
 
     if let Some(guild_id) = arguments.next() {
         let guild_id: u64 = guild_id.parse()?;
-        let guild_id = GuildId(guild_id);
+        let guild_id = Id::new(guild_id);
 
         let guild_name = context.cache.get_guild(guild_id).await?.name;
 
@@ -240,8 +245,10 @@ async fn command_dump(
         context
             .http
             .create_message(message.channel_id)
-            .attachment(format!("{}.dot", guild_name), dot)
-            .attachment(format!("{}.png", guild_name), png)
+            .attachments(&[
+                Attachment::from_bytes(format!("{}.dot", guild_name), dot.into_bytes(), 0),
+                Attachment::from_bytes(format!("{}.png", guild_name), png, 1),
+            ])?
             .await?;
 
         return Ok(());
@@ -269,7 +276,7 @@ async fn command_dump(
     context
         .http
         .create_message(message.channel_id)
-        .content(content)?
+        .content(&content)?
         .await?;
 
     Ok(())
