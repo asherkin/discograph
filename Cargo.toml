@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [dependencies]
-anyhow = "1"
 ctrlc = "3"
 futures = "0.3"
 lru = "0.10"
@@ -19,6 +18,7 @@ twilight-gateway = "0.15"
 twilight-http = "0.15"
 twilight-model = "0.15"
 unicode-segmentation = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 sqlx = { version = "0.6", default-features = false, features = ["runtime-tokio-rustls", "mysql"] }
 tokio = { version = "1", features = ["macros", "rt", "process"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

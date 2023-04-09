@@ -51,11 +51,19 @@ jobs:
           components: rustfmt, clippy
 
       - run: cargo build --all --all-targets --target=${{ matrix.target }}
+        if: success() || failure()
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - run: cargo test --all --all-targets --target=${{ matrix.target }}
+        if: success() || failure()
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
           
       - run: cargo fmt --all -- --check
+        if: success() || failure()
       
       - run: cargo clippy --all --all-targets --target=${{ matrix.target }} -- -D warnings
+        if: success() || failure()
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}

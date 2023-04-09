@@ -58,7 +58,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
     };
 
     if let Err(error) = result {
-        error!("command failed: {}", error);
+        error!("command failed: {:?}", error);
 
         context
             .http
@@ -147,6 +147,7 @@ async fn command_graph(
 
     let guild_id = message.guild_id.context("message not to guild")?;
     let guild_name = context.cache.get_guild(guild_id).await?.name;
+    let attachment_base_name = sanitize_name_for_attachment(&guild_name);
 
     let color_scheme = match arguments.next() {
         Some("light") => ColorScheme::Light,
@@ -190,7 +191,7 @@ async fn command_graph(
         .http
         .create_message(message.channel_id)
         .attachments(&[Attachment::from_bytes(
-            format!("{}.png", guild_name),
+            attachment_base_name + ".png",
             png,
             0,
         )])?
@@ -227,6 +228,7 @@ async fn command_dump(
         let guild_id = Id::new(guild_id);
 
         let guild_name = context.cache.get_guild(guild_id).await?.name;
+        let attachment_base_name = sanitize_name_for_attachment(&guild_name);
 
         let graph = {
             let social = context.social.lock();
@@ -246,8 +248,8 @@ async fn command_dump(
             .http
             .create_message(message.channel_id)
             .attachments(&[
-                Attachment::from_bytes(format!("{}.dot", guild_name), dot.into_bytes(), 0),
-                Attachment::from_bytes(format!("{}.png", guild_name), png, 1),
+                Attachment::from_bytes(attachment_base_name.clone() + ".dot", dot.into_bytes(), 0),
+                Attachment::from_bytes(attachment_base_name + ".png", png, 1),
             ])?
             .await?;
 
@@ -280,6 +282,23 @@ async fn command_dump(
         .await?;
 
     Ok(())
+}
+
+fn sanitize_name_for_attachment(name: &str) -> String {
+    let mut string = String::with_capacity(name.len());
+    let mut prev_escaped = false;
+
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+            string.push(c);
+            prev_escaped = false;
+        } else if !prev_escaped {
+            string.push('_');
+            prev_escaped = true;
+        }
+    }
+
+    string
 }
 
 async fn render_dot(dot: &str) -> Result<Vec<u8>> {
@@ -345,4 +364,17 @@ async fn add_png_shadow(input: &[u8], color_scheme: ColorScheme) -> Result<Vec<u
     }
 
     Ok(output.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_name_for_attachment;
+
+    #[test]
+    fn test_sanitize_name_for_attachment() {
+        assert_eq!(
+            sanitize_name_for_attachment("Name_ With & Spaces"),
+            "Name_With_Spaces"
+        );
+    }
 }
