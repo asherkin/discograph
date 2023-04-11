@@ -112,6 +112,7 @@ impl UserRelationshipGraphMap {
         requesting_user: Option<&User>,
         color_scheme: ColorScheme,
         transparent: bool,
+        font_name: &str,
     ) -> AnyhowResult<String> {
         // Gather all undirected edges.
         let mut undirected_edges = HashMap::new();
@@ -238,8 +239,6 @@ impl UserRelationshipGraphMap {
             anyhow::bail!("Not enough users to create a graph");
         }
 
-        const FONT_NAME: &str = "Noto Sans Display, Noto Emoji";
-
         const BG_LIGHT: u32 = 0xFFFFFF;
         const FG_LIGHT: u32 = 0x060607;
         const BG_DARK: u32 = 0x313338;
@@ -298,10 +297,10 @@ impl UserRelationshipGraphMap {
             lines.push(format!("    label = \"{}\"", label));
             lines.push(String::from("    labelloc = \"bottom\""));
             lines.push(String::from("    labeljust = \"left\""));
-            lines.push(format!("    fontname = \"{}\"", FONT_NAME));
+            lines.push(format!("    fontname = \"{}\"", font_name));
         }
 
-        lines.push(format!("    node [ fontname = \"{}\" ]", FONT_NAME));
+        lines.push(format!("    node [ fontname = \"{}\" ]", font_name));
 
         for (user_id, weight) in &user_weights {
             let (name, role_color) = names_and_colors.get(user_id).unwrap().clone();

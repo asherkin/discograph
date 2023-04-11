@@ -176,6 +176,7 @@ async fn command_graph(
             Some(&message.author),
             color_scheme,
             transparent,
+            &context.font_name,
         )
         .await?;
 
@@ -239,7 +240,14 @@ async fn command_dump(
         };
 
         let dot = graph
-            .to_dot(context, guild_id, None, ColorScheme::Light, false)
+            .to_dot(
+                context,
+                guild_id,
+                None,
+                ColorScheme::Light,
+                false,
+                &context.font_name,
+            )
             .await?;
 
         let png = render_dot(&dot).await?;

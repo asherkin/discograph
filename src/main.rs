@@ -164,6 +164,7 @@ async fn main() -> Result<()> {
             cache: cache.clone(),
             social: social.clone(),
             pool: pool.clone(),
+            font_name: get_optional_env("FONT_NAME").unwrap_or("sans-serif".into()),
         };
 
         tokio::spawn(async move {

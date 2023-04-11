@@ -19,4 +19,5 @@ pub struct Context {
     pub cache: Arc<Cache>,
     pub social: Arc<Mutex<SocialGraph>>,
     pub pool: Option<MySqlPool>,
+    pub font_name: String,
 }
