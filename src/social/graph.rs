@@ -547,8 +547,19 @@ impl SocialGraph {
     }
 
     // TODO: Temporary hack for debug command.
-    pub fn get_all_guild_ids(&self) -> Vec<Id<GuildMarker>> {
-        self.graph.keys().copied().collect()
+    pub fn get_all_guild_ids(&self) -> Vec<(Id<GuildMarker>, usize)> {
+        let mut guilds: Vec<_> = self
+            .graph
+            .iter()
+            .map(|(guild_id, channels)| {
+                (*guild_id, channels.values().map(|graph| graph.len()).sum())
+            })
+            .collect();
+
+        guilds.sort_by_key(|(_, len)| *len);
+        guilds.reverse();
+
+        guilds
     }
 
     pub(crate) fn get_graph(

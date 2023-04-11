@@ -271,7 +271,8 @@ async fn command_dump(
 
     let guild_futures = guild_ids
         .into_iter()
-        .map(|guild_id| context.cache.get_guild(guild_id));
+        .take(20)
+        .map(|(guild_id, _)| context.cache.get_guild(guild_id));
 
     let guilds: Vec<_> = join_all(guild_futures)
         .await
@@ -280,7 +281,7 @@ async fn command_dump(
         .map(|guild| format!("{} - {}", guild.id, guild.name))
         .collect();
 
-    let mut content = "Guilds:\n".to_owned();
+    let mut content = "Largest 20 guilds:\n".to_owned();
     content.push_str(&guilds.join("\n"));
 
     context
