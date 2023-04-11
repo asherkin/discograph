@@ -242,8 +242,8 @@ impl UserRelationshipGraphMap {
 
         const BG_LIGHT: u32 = 0xFFFFFF;
         const FG_LIGHT: u32 = 0x060607;
-        const BG_DARK: u32 = 0x36393F;
-        const FG_DARK: u32 = 0xFFFFFF;
+        const BG_DARK: u32 = 0x313338;
+        const FG_DARK: u32 = 0xF2F3F5;
 
         let (bg_color, fg_color) = match color_scheme {
             ColorScheme::Light => (BG_LIGHT, FG_LIGHT),

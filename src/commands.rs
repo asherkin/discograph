@@ -327,7 +327,7 @@ async fn render_dot(dot: &str) -> Result<Vec<u8>> {
 async fn add_png_shadow(input: &[u8], color_scheme: ColorScheme) -> Result<Vec<u8>> {
     let background_color = match color_scheme {
         ColorScheme::Light => 0xFFFFFF,
-        ColorScheme::Dark => 0x36393F,
+        ColorScheme::Dark => 0x313338,
     };
 
     let mut convert = process::Command::new("convert")
