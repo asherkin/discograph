@@ -188,7 +188,7 @@ impl From<&Message> for CachedMessage {
 #[allow(clippy::type_complexity)]
 pub struct Cache {
     http: Arc<Client>,
-    pending_guild_members: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    pending_guild_members: Mutex<HashMap<String, oneshot::Sender<Vec<Id<UserMarker>>>>>,
     users: Mutex<LruCache<Id<UserMarker>, CachedUser>>,
     guilds: Mutex<LruCache<Id<GuildMarker>, CachedGuild>>,
     roles: Mutex<LruCache<Id<RoleMarker>, CachedRole>>,
@@ -284,7 +284,7 @@ impl Cache {
 
                 if let Some(nonce) = &chunk.nonce {
                     if let Some(sender) = self.pending_guild_members.lock().remove(nonce) {
-                        if sender.send(()).is_err() {
+                        if sender.send(chunk.not_found.clone()).is_err() {
                             warn!("failed to notify member chunk with nonce {}", nonce);
                         }
                     } else {
@@ -328,12 +328,15 @@ impl Cache {
         debug!("cache stats: {:?}", self.get_stats());
     }
 
+    /// Bulk request member info for a guild via the gateway.
+    ///
+    /// Returns the IDs of members that could not be loaded by Discord.
     pub async fn bulk_preload_members(
         &self,
         shard: &MessageSender,
         guild_id: Id<GuildMarker>,
         user_ids: impl Iterator<Item = Id<UserMarker>>,
-    ) -> Result<()> {
+    ) -> Result<Vec<Id<UserMarker>>> {
         let users_to_load: Vec<_> = {
             let members = self.members.lock();
             user_ids
@@ -342,7 +345,7 @@ impl Cache {
         };
 
         if users_to_load.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let (nonces, commands): (Vec<_>, Vec<_>) = users_to_load
@@ -397,23 +400,32 @@ impl Cache {
                 .collect()
         };
 
-        if timeout(
+        let future = timeout(
             Duration::from_secs(5 * (nonces.len() as u64)),
             join_all(futures),
-        )
-        .await
-        .is_err()
-        {
-            warn!("member chunk request for guild {} timed out", guild_id);
+        );
 
-            let mut pending_guild_members = self.pending_guild_members.lock();
+        let results = match future.await {
+            Ok(results) => results,
+            Err(elapsed) => {
+                warn!(
+                    "member chunk request for guild {} timed out after {}",
+                    guild_id, elapsed
+                );
 
-            for nonce in nonces {
-                pending_guild_members.remove(&nonce);
+                let mut pending_guild_members = self.pending_guild_members.lock();
+
+                for nonce in nonces {
+                    pending_guild_members.remove(&nonce);
+                }
+
+                return Ok(Vec::new());
             }
-        }
+        };
 
-        Ok(())
+        let not_found: Vec<_> = results.into_iter().flatten().flatten().collect();
+
+        Ok(not_found)
     }
 
     fn put_user(&self, user: &User) {

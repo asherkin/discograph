@@ -2,7 +2,7 @@ use anyhow::Result as AnyhowResult;
 use futures::future::join_all;
 use serde::de::{Deserialize, Deserializer, Error as DeserializerError, MapAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
-use tracing::error;
+use tracing::{error, info, warn};
 use twilight_model::id::marker::{ChannelMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::user::User;
@@ -170,16 +170,53 @@ impl UserRelationshipGraphMap {
 
         // Get the display name for each user ID, ignoring failed lookups or bots.
         let names_and_colors: HashMap<_, _> = {
-            context
+            let not_found: HashSet<_> = context
                 .cache
                 .bulk_preload_members(&context.shard, guild_id, user_ids.iter().cloned())
-                .await?;
+                .await?
+                .into_iter()
+                .collect();
 
             let roles = &roles;
+            let not_found = &not_found;
             let futures = user_ids.iter().map(|&user_id| async move {
                 // Query the member first as it might populate the cache for the user.
-                let member = context.cache.get_member(guild_id, user_id).await.ok();
-                let user = context.cache.get_user(user_id).await.ok()?;
+                // Avoid querying for users that our bulk fetch explicitly detected as missing.
+
+                let member = if !not_found.contains(&user_id) {
+                    match context.cache.get_member(guild_id, user_id).await {
+                        Ok(user) => Some(user),
+                        Err(error) => {
+                            info!(
+                                ?guild_id,
+                                ?user_id,
+                                ?error,
+                                "failed to fetch member from cache"
+                            );
+
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // TODO: Decide if we should just remove users without member info from the graph.
+                //       It generally means they've left the guild, and if they've deleted their
+                //       account Discord doesn't like us repeatedly querying them either.
+                let user = match context.cache.get_user(user_id).await {
+                    Ok(user) => user,
+                    Err(error) => {
+                        warn!(
+                            ?guild_id,
+                            ?user_id,
+                            ?error,
+                            "failed to fetch user from cache"
+                        );
+
+                        return None;
+                    }
+                };
 
                 if user.bot {
                     return None;
