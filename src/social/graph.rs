@@ -169,53 +169,47 @@ impl UserRelationshipGraphMap {
         };
 
         // Get the display name for each user ID, ignoring failed lookups or bots.
-        // TODO: This can be *very* slow if the user isn't in the cache..
         let names_and_colors: HashMap<_, _> = {
-            let user_futures = user_ids
-                .iter()
-                .map(|&user_id| context.cache.get_user(user_id));
+            context
+                .cache
+                .bulk_preload_members(&context.shard, guild_id, user_ids.iter().cloned())
+                .await?;
 
-            let member_futures = join_all(user_futures).await.into_iter().filter_map(|user| {
-                let user = user.ok()?;
+            let roles = &roles;
+            let futures = user_ids.iter().map(|&user_id| async move {
+                // Query the member first as it might populate the cache for the user.
+                let member = context.cache.get_member(guild_id, user_id).await.ok();
+                let user = context.cache.get_user(user_id).await.ok()?;
 
                 if user.bot {
                     return None;
                 }
 
-                Some(async {
-                    let member = context.cache.get_member(guild_id, user.id).await;
+                let color = member.as_ref().and_then(|member| {
+                    let member_roles: HashSet<_> = member.roles.iter().cloned().collect();
 
-                    (user, member)
-                })
+                    roles.iter().find_map(|role| {
+                        if member_roles.contains(&role.id) {
+                            Some(role.color)
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                let name = if let Some(CachedMember {
+                    nick: Some(nick), ..
+                }) = member
+                {
+                    nick
+                } else {
+                    user.name
+                };
+
+                Some((user_id, (name, color)))
             });
 
-            join_all(member_futures)
-                .await
-                .into_iter()
-                .map(|(user, member)| {
-                    let name = match &member {
-                        Ok(CachedMember {
-                            nick: Some(nick), ..
-                        }) => nick,
-                        _ => &user.name,
-                    }
-                    .to_owned();
-
-                    let color = member.ok().and_then(|member| {
-                        let member_roles: HashSet<_> = member.roles.iter().cloned().collect();
-
-                        roles.iter().find_map(|role| {
-                            if member_roles.contains(&role.id) {
-                                Some(role.color)
-                            } else {
-                                None
-                            }
-                        })
-                    });
-
-                    (user.id, (name, color))
-                })
-                .collect()
+            join_all(futures).await.into_iter().flatten().collect()
         };
 
         // Filter any edges that were to bots or we couldn't lookup and sum per-user weights.

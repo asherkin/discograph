@@ -1,5 +1,6 @@
 use parking_lot::Mutex;
 use sqlx::MySqlPool;
+use twilight_gateway::MessageSender;
 use twilight_http::Client;
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
@@ -13,6 +14,7 @@ use crate::social::graph::SocialGraph;
 
 #[derive(Clone)]
 pub struct Context {
+    pub shard: MessageSender,
     pub application_id: Id<ApplicationMarker>,
     pub user: Arc<CurrentUser>,
     pub owners: HashSet<Id<UserMarker>>,

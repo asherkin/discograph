@@ -113,7 +113,7 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
             Ok(false)
         }
         InteractionCreate(interaction) => {
-            debug!("interaction received: {:?}", interaction);
+            info!("interaction received: {:?}", interaction);
 
             let command_data = match &interaction.data {
                 Some(ApplicationCommand(data)) => data,
@@ -389,7 +389,7 @@ async fn command_graph_from_message(
 async fn command_graph_from_interaction(
     context: &Context,
     command: &CommandContext,
-    options: &Vec<CommandDataOption>,
+    options: &[CommandDataOption],
 ) -> Result<CommandResponse> {
     let (color_scheme, transparent) = if let Some(CommandDataOption {
         value: CommandOptionValue::String(style),
@@ -498,7 +498,7 @@ async fn command_dump_from_message(
 async fn command_dump_from_interaction(
     context: &Context,
     command: &CommandContext,
-    options: &Vec<CommandDataOption>,
+    options: &[CommandDataOption],
 ) -> Result<CommandResponse> {
     if !context.owners.contains(&command.author.id) {
         info!(

@@ -1,12 +1,17 @@
 use anyhow::{Context, Result};
+use futures::future::join_all;
 use lru::LruCache;
 use parking_lot::Mutex;
-use tracing::{debug, info};
+use tokio::sync::oneshot;
+use tokio::time::timeout;
+use tracing::{debug, info, warn};
+use twilight_gateway::MessageSender;
 use twilight_http::Client;
 use twilight_model::channel::message::{Mention, MessageType};
 use twilight_model::channel::{Channel, ChannelType, Message};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::payload::incoming::{MemberUpdate, MessageUpdate};
+use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
 use twilight_model::id::marker::{
     ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
@@ -15,9 +20,11 @@ use twilight_model::id::Id;
 use twilight_model::user::User;
 use twilight_model::util::ImageHash;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct CachedUser {
@@ -181,6 +188,7 @@ impl From<&Message> for CachedMessage {
 #[allow(clippy::type_complexity)]
 pub struct Cache {
     http: Arc<Client>,
+    pending_guild_members: Mutex<HashMap<String, oneshot::Sender<()>>>,
     users: Mutex<LruCache<Id<UserMarker>, CachedUser>>,
     guilds: Mutex<LruCache<Id<GuildMarker>, CachedGuild>>,
     roles: Mutex<LruCache<Id<RoleMarker>, CachedRole>>,
@@ -240,6 +248,7 @@ impl Cache {
 
         Cache {
             http,
+            pending_guild_members: Mutex::new(HashMap::new()),
             users: Mutex::new(LruCache::new(cache_limit)),
             guilds: Mutex::new(LruCache::new(cache_limit)),
             roles: Mutex::new(LruCache::new(cache_limit)),
@@ -271,6 +280,19 @@ impl Cache {
             Event::MemberChunk(chunk) => {
                 for member in &chunk.members {
                     self.put_full_member(chunk.guild_id, member)
+                }
+
+                if let Some(nonce) = &chunk.nonce {
+                    if let Some(sender) = self.pending_guild_members.lock().remove(nonce) {
+                        if sender.send(()).is_err() {
+                            warn!("failed to notify member chunk with nonce {}", nonce);
+                        }
+                    } else {
+                        warn!(
+                            "got member chunk with nonce {}, but there was no pending request",
+                            nonce
+                        );
+                    }
                 }
             }
             Event::MessageCreate(message) => self.put_message(message),
@@ -304,6 +326,94 @@ impl Cache {
         }
 
         debug!("cache stats: {:?}", self.get_stats());
+    }
+
+    pub async fn bulk_preload_members(
+        &self,
+        shard: &MessageSender,
+        guild_id: Id<GuildMarker>,
+        user_ids: impl Iterator<Item = Id<UserMarker>>,
+    ) -> Result<()> {
+        let users_to_load: Vec<_> = {
+            let members = self.members.lock();
+            user_ids
+                .filter(|user_id| !members.contains(&(guild_id, *user_id)))
+                .collect()
+        };
+
+        if users_to_load.is_empty() {
+            return Ok(());
+        }
+
+        let (nonces, commands): (Vec<_>, Vec<_>) = users_to_load
+            .chunks(100)
+            .map(|chunk| {
+                use rand::distributions::Alphanumeric;
+                use rand::{thread_rng, Rng};
+
+                let nonce: String = thread_rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(32)
+                    .map(char::from)
+                    .collect();
+
+                let command = RequestGuildMembers::builder(guild_id)
+                    .nonce(&nonce)
+                    .user_ids(chunk)
+                    .unwrap();
+
+                (nonce, command)
+            })
+            .unzip();
+
+        info!(
+            "requesting {} members for guild {} in {} chunks",
+            users_to_load.len(),
+            guild_id,
+            nonces.len(),
+        );
+
+        let futures: Vec<_> = {
+            let mut pending_guild_members = self.pending_guild_members.lock();
+
+            nonces
+                .iter()
+                .zip(commands.into_iter())
+                .map(|(nonce, command)| {
+                    let (sender, receiver) = oneshot::channel();
+                    if pending_guild_members
+                        .insert(nonce.clone(), sender)
+                        .is_some()
+                    {
+                        panic!("guild member chunk request nonce collision occurred");
+                    }
+
+                    if let Err(error) = shard.command(&command) {
+                        warn!(?command, ?error, "failed to request member chunk");
+                    }
+
+                    receiver
+                })
+                .collect()
+        };
+
+        if timeout(
+            Duration::from_secs(5 * (nonces.len() as u64)),
+            join_all(futures),
+        )
+        .await
+        .is_err()
+        {
+            warn!("member chunk request for guild {} timed out", guild_id);
+
+            let mut pending_guild_members = self.pending_guild_members.lock();
+
+            for nonce in nonces {
+                pending_guild_members.remove(&nonce);
+            }
+        }
+
+        Ok(())
     }
 
     fn put_user(&self, user: &User) {

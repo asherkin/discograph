@@ -230,24 +230,12 @@ async fn main() -> Result<()> {
 
         debug!(?event, shard = ?shard.id(), "received event");
 
-        if let Event::Ready(event) = &event {
-            let activity: Activity = MinimalActivity {
-                kind: ActivityType::Watching,
-                name: format!("| @{} help", event.user.name),
-                url: None,
-            }
-            .into();
-
-            let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)?;
-
-            shard.command(&message).await?;
-        }
-
         // Update the cache with the event.
         // Done before we spawn the tasks to ensure the cache is updated.
         cache.update(&event);
 
         let context = Context {
+            shard: shard.sender(),
             application_id,
             user: user.clone(),
             owners: owners.clone(),
@@ -292,6 +280,19 @@ async fn get_application_id_and_owners(
 }
 
 async fn handle_event(context: &Context, event: &Event) -> Result<()> {
+    if let Event::Ready(_) | Event::Resumed = event {
+        let activity: Activity = MinimalActivity {
+            kind: ActivityType::Watching,
+            name: format!("| @{} help", context.user.name),
+            url: None,
+        }
+        .into();
+
+        let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)?;
+
+        context.shard.command(&message)?;
+    }
+
     if commands::handle_event(context, event).await? {
         // If the command processor consumed it, don't do any more processing.
         return Ok(());
