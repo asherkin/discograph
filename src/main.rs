@@ -4,11 +4,13 @@ mod context;
 mod social;
 
 use anyhow::{Context as AnyhowContext, Result};
+use futures::StreamExt;
 use parking_lot::Mutex;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::Connection;
 use tracing::{debug, error, info, warn};
-use twilight_gateway::{Config, Event, Shard};
+use twilight_gateway::stream::ShardEventStream;
+use twilight_gateway::{stream, Config, Event};
 use twilight_http::{Client as HttpClient, Client};
 use twilight_model::application::command::{
     Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
@@ -16,7 +18,7 @@ use twilight_model::application::command::{
 };
 use twilight_model::gateway::payload::outgoing::UpdatePresence;
 use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
-use twilight_model::gateway::{CloseFrame, Intents, ShardId};
+use twilight_model::gateway::{CloseFrame, Intents};
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::oauth::team::TeamMembershipState;
@@ -178,36 +180,30 @@ async fn main() -> Result<()> {
 
     let config = Config::new(token, intents);
 
-    // Configure gateway connection.
-    // TODO: Bring back multiple shards.
-    let mut shard = Shard::with_config(ShardId::ONE, config);
+    let mut shards: Vec<_> = stream::create_recommended(&http, config, |_, config| config.build())
+        .await?
+        .collect();
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let shutdown_clone = shutdown.clone();
+    let shard_senders: Vec<_> = shards.iter().map(|shard| shard.sender()).collect();
+
     ctrlc::set_handler(move || {
         info!("ctrlc handler called");
 
         shutdown_clone.store(true, Ordering::Relaxed);
-    })?;
 
-    let mut close_sent = false;
-
-    loop {
-        let event = shard.next_event().await;
-
-        if shutdown.load(Ordering::Relaxed) {
-            if !close_sent {
-                let _ = shard.close(CloseFrame::NORMAL).await;
-                close_sent = true;
-            }
-
-            if let Ok(Event::GatewayClose(_)) = event {
-                // Calling next_event() after GatewayClose will reconnect.
-                break;
+        for sender in &shard_senders {
+            if let Err(error) = sender.close(CloseFrame::NORMAL) {
+                warn!(?error, "failed to send close frame");
             }
         }
+    })?;
 
+    let mut stream = ShardEventStream::new(shards.iter_mut());
+
+    while let Some((shard, event)) = stream.next().await {
         let event = match event {
             Ok(event) => event,
             Err(source) => {
@@ -229,6 +225,14 @@ async fn main() -> Result<()> {
         }
 
         debug!(?event, shard = ?shard.id(), "received event");
+
+        if let Event::GatewayClose(_) = event {
+            if shutdown.load(Ordering::Relaxed) {
+                // Forget the shard to avoid returning it back to the stream.
+                std::mem::forget(shard);
+                continue;
+            }
+        }
 
         // Update the cache with the event.
         // Done before we spawn the tasks to ensure the cache is updated.

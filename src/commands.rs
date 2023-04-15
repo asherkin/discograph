@@ -45,7 +45,9 @@ struct CommandResponse {
 pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
     match event {
         GuildCreate(guild) => {
-            let commands = if Some(guild.id) == context.management_guild {
+            let guild_id = guild.id;
+
+            let commands = if Some(guild_id) == context.management_guild {
                 vec![
                     Command {
                         application_id: None,
@@ -97,18 +99,22 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
                 Vec::new()
             };
 
-            match context
-                .http
-                .interaction(context.application_id)
-                .set_guild_commands(guild.id, &commands)
-                .await
-            {
-                Ok(_) => debug!("setup application commands for guild {}", guild.id),
-                Err(err) => warn!(
-                    "failed to setup application commands for guild {}: {:?}",
-                    guild.id, err
-                ),
-            }
+            let http = context.http.clone();
+            let application_id = context.application_id;
+
+            tokio::spawn(async move {
+                match http
+                    .interaction(application_id)
+                    .set_guild_commands(guild_id, &commands)
+                    .await
+                {
+                    Ok(_) => debug!("setup application commands for guild {}", guild_id),
+                    Err(err) => warn!(
+                        "failed to setup application commands for guild {}: {:?}",
+                        guild_id, err
+                    ),
+                }
+            });
 
             Ok(false)
         }
