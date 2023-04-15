@@ -282,6 +282,24 @@ impl Cache {
             }
             Event::RoleCreate(role) => self.put_role(&role.role),
             Event::RoleUpdate(role) => self.put_role(&role.role),
+            Event::InteractionCreate(interaction) => {
+                if let Some(message) = &interaction.message {
+                    self.put_message(message);
+                }
+
+                if let Some(user) = &interaction.user {
+                    self.put_user(user);
+                }
+
+                if let (Some(guild_id), Some(member)) = (interaction.guild_id, &interaction.member)
+                {
+                    if let Some(user) = &member.user {
+                        self.put_user(user);
+
+                        self.put_member(guild_id, user.id, member);
+                    }
+                }
+            }
             _ => info!("event not used by cache: {:?}", event.kind()),
         }
 

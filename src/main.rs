@@ -10,10 +10,14 @@ use sqlx::Connection;
 use tracing::{debug, error, info, warn};
 use twilight_gateway::{Config, Event, Shard};
 use twilight_http::{Client as HttpClient, Client};
+use twilight_model::application::command::{
+    Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
+    CommandType,
+};
 use twilight_model::gateway::payload::outgoing::UpdatePresence;
 use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
 use twilight_model::gateway::{CloseFrame, Intents, ShardId};
-use twilight_model::id::marker::UserMarker;
+use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::oauth::team::TeamMembershipState;
 
@@ -74,12 +78,98 @@ async fn main() -> Result<()> {
 
     // Just block on these, it simplifies the startup logic.
     let user = Arc::new(http.current_user().await?.model().await?);
-    let owners = Arc::new(get_application_owners(&http).await?);
+    let (application_id, owners) = get_application_id_and_owners(&http).await?;
 
     let cache = Arc::new(Cache::new(http.clone()));
 
     let data_dir = get_optional_env("DATA_DIR").map(PathBuf::from);
     let social = Arc::new(Mutex::new(SocialGraph::new(data_dir)));
+
+    let font_name = get_optional_env("FONT_NAME").unwrap_or("sans-serif".into());
+
+    let management_guild = get_optional_env("MANAGEMENT_GUILD").map(|value| {
+        use std::str::FromStr;
+
+        Id::<GuildMarker>::from_str(&value).expect("Invalid MANAGEMENT_GUILD value")
+    });
+
+    let http_clone = http.clone();
+    tokio::spawn(async move {
+        http_clone
+            .interaction(application_id)
+            .set_global_commands(&[
+                Command {
+                    application_id: None,
+                    default_member_permissions: None,
+                    dm_permission: Some(true),
+                    description: "Show help info and commands.".to_string(),
+                    description_localizations: None,
+                    guild_id: None,
+                    id: None,
+                    kind: CommandType::ChatInput,
+                    name: "help".to_string(),
+                    name_localizations: None,
+                    nsfw: None,
+                    options: Vec::new(),
+                    version: Id::new(1),
+                },
+                Command {
+                    application_id: None,
+                    default_member_permissions: None,
+                    dm_permission: Some(false),
+                    description: "Get a preview-quality graph image.".to_string(),
+                    description_localizations: None,
+                    guild_id: None,
+                    id: None,
+                    kind: CommandType::ChatInput,
+                    name: "graph".to_string(),
+                    name_localizations: None,
+                    nsfw: None,
+                    options: vec![CommandOption {
+                        autocomplete: None,
+                        channel_types: None,
+                        choices: Some(vec![
+                            CommandOptionChoice {
+                                name: "Light".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("light".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Dark".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("dark".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Transparent Light".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("transparent light".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Transparent Dark".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("transparent dark".into()),
+                            },
+                        ]),
+                        description: "Style of graph to render.".to_string(),
+                        description_localizations: None,
+                        kind: CommandOptionType::String,
+                        max_length: None,
+                        max_value: None,
+                        min_length: None,
+                        min_value: None,
+                        name: "style".to_string(),
+                        name_localizations: None,
+                        options: None,
+                        required: Some(false),
+                    }],
+                    version: Id::new(1),
+                },
+            ])
+            .await
+            .expect("failed to setup global commands");
+
+        debug!("setup global commands");
+    });
 
     let intents = Intents::GUILDS
         | Intents::GUILD_MESSAGES
@@ -158,13 +248,15 @@ async fn main() -> Result<()> {
         cache.update(&event);
 
         let context = Context {
+            application_id,
             user: user.clone(),
             owners: owners.clone(),
+            management_guild,
             http: http.clone(),
             cache: cache.clone(),
             social: social.clone(),
             pool: pool.clone(),
-            font_name: get_optional_env("FONT_NAME").unwrap_or("sans-serif".into()),
+            font_name: font_name.clone(),
         };
 
         tokio::spawn(async move {
@@ -179,7 +271,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_application_owners(http: &Client) -> Result<HashSet<Id<UserMarker>>> {
+async fn get_application_id_and_owners(
+    http: &Client,
+) -> Result<(Id<ApplicationMarker>, HashSet<Id<UserMarker>>)> {
     let info = http.current_user_application().await?.model().await?;
 
     let mut owners = HashSet::new();
@@ -194,7 +288,7 @@ async fn get_application_owners(http: &Client) -> Result<HashSet<Id<UserMarker>>
         owners.insert(owner.id);
     }
 
-    Ok(owners)
+    Ok((info.id, owners))
 }
 
 async fn handle_event(context: &Context, event: &Event) -> Result<()> {

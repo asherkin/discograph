@@ -1,26 +1,214 @@
-use anyhow::{Context as AnyhowContext, Result};
+use std::process::Stdio;
+
+use anyhow::{anyhow, Context as AnyhowContext, Result};
 use futures::future::join_all;
+use futures::FutureExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use twilight_command_parser::{Arguments, CommandParserConfig, Parser};
-use twilight_model::channel::message::embed::{Embed, EmbedField, EmbedFooter};
+use twilight_http::request::application::interaction::UpdateResponse;
+use twilight_http::request::channel::message::CreateMessage;
+use twilight_model::application::command::{
+    Command, CommandOption, CommandOptionType, CommandType,
+};
+use twilight_model::application::interaction::application_command::{
+    CommandDataOption, CommandOptionValue,
+};
+use twilight_model::application::interaction::InteractionData::ApplicationCommand;
+use twilight_model::channel::message::embed::{Embed, EmbedField};
+use twilight_model::channel::message::{AllowedMentions, MentionType};
 use twilight_model::channel::Message;
 use twilight_model::gateway::event::Event;
-use twilight_model::gateway::event::Event::MessageCreate;
-use twilight_model::id::Id;
-
-use std::process::Stdio;
+use twilight_model::gateway::event::Event::{GuildCreate, InteractionCreate, MessageCreate};
 use twilight_model::http::attachment::Attachment;
+use twilight_model::http::interaction::{InteractionResponse, InteractionResponseType};
+use twilight_model::id::marker::GuildMarker;
+use twilight_model::id::Id;
+use twilight_model::user::User;
 
 use crate::context::Context;
 use crate::social::graph::ColorScheme;
 
+struct CommandContext {
+    guild_id: Option<Id<GuildMarker>>,
+    author: User,
+}
+
+#[derive(Debug)]
+struct CommandResponse {
+    content: Option<String>,
+    attachments: Vec<Attachment>,
+    embeds: Vec<Embed>,
+}
+
 pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
     match event {
+        GuildCreate(guild) => {
+            let commands = if Some(guild.id) == context.management_guild {
+                vec![
+                    Command {
+                        application_id: None,
+                        default_member_permissions: None,
+                        dm_permission: None,
+                        description: "Internal debug command.".to_string(),
+                        description_localizations: None,
+                        guild_id: None,
+                        id: None,
+                        kind: CommandType::ChatInput,
+                        name: "dump".to_string(),
+                        name_localizations: None,
+                        nsfw: None,
+                        options: vec![CommandOption {
+                            autocomplete: None,
+                            channel_types: None,
+                            choices: None,
+                            description: "ID of guild to dump.".to_string(),
+                            description_localizations: None,
+                            kind: CommandOptionType::String,
+                            max_length: None,
+                            max_value: None,
+                            min_length: None,
+                            min_value: None,
+                            name: "guild".to_string(),
+                            name_localizations: None,
+                            options: None,
+                            required: Some(false),
+                        }],
+                        version: Id::new(1),
+                    },
+                    Command {
+                        application_id: None,
+                        default_member_permissions: None,
+                        dm_permission: None,
+                        description: "Internal debug command.".to_string(),
+                        description_localizations: None,
+                        guild_id: None,
+                        id: None,
+                        kind: CommandType::ChatInput,
+                        name: "stats".to_string(),
+                        name_localizations: None,
+                        nsfw: None,
+                        options: Vec::new(),
+                        version: Id::new(1),
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+
+            match context
+                .http
+                .interaction(context.application_id)
+                .set_guild_commands(guild.id, &commands)
+                .await
+            {
+                Ok(_) => debug!("setup application commands for guild {}", guild.id),
+                Err(err) => warn!(
+                    "failed to setup application commands for guild {}: {:?}",
+                    guild.id, err
+                ),
+            }
+
+            Ok(false)
+        }
+        InteractionCreate(interaction) => {
+            debug!("interaction received: {:?}", interaction);
+
+            let command_data = match &interaction.data {
+                Some(ApplicationCommand(data)) => data,
+                _ => return Ok(false),
+            };
+
+            let command_context = CommandContext {
+                guild_id: interaction.guild_id,
+                author: interaction
+                    .user
+                    .as_ref()
+                    .unwrap_or_else(|| interaction.member.as_ref().unwrap().user.as_ref().unwrap())
+                    .clone(),
+            };
+
+            let result_future = match command_data.name.as_str() {
+                "help" => command_help(context).boxed(),
+                "graph" => {
+                    command_graph_from_interaction(context, &command_context, &command_data.options)
+                        .boxed()
+                }
+                "stats" => command_stats(context).boxed(),
+                "dump" => {
+                    command_dump_from_interaction(context, &command_context, &command_data.options)
+                        .boxed()
+                }
+                _ => return Ok(false),
+            };
+
+            context
+                .http
+                .interaction(interaction.application_id)
+                .create_response(
+                    interaction.id,
+                    &interaction.token,
+                    &InteractionResponse {
+                        kind: InteractionResponseType::DeferredChannelMessageWithSource,
+                        data: None,
+                    },
+                )
+                .await?;
+
+            let result = match result_future.await {
+                Ok(response) => {
+                    let response_interaction = context.http.interaction(interaction.application_id);
+
+                    let update_response = response_interaction.update_response(&interaction.token);
+
+                    add_command_response_to_interaction_and_send(update_response, &response).await
+                }
+                error => error.and(Ok(())),
+            };
+
+            if let Err(error) = result {
+                error!("command failed: {:?}", error);
+
+                context
+                    .http
+                    .interaction(interaction.application_id)
+                    .update_response(&interaction.token)
+                    .content(Some(&format!(
+                        "Sorry, there was an error handling that command :warning:\n```\n{}\n```",
+                        error
+                    )))?
+                    .await?;
+            }
+
+            Ok(true)
+        }
         MessageCreate(message) => handle_message(context, message).await,
         _ => Ok(false),
     }
+}
+
+async fn add_command_response_to_interaction_and_send<'a>(
+    interaction: UpdateResponse<'a>,
+    response: &'a CommandResponse,
+) -> Result<()> {
+    let mut interaction = interaction;
+
+    if let Some(content) = &response.content {
+        interaction = interaction.content(Some(content))?;
+    }
+
+    if !response.attachments.is_empty() {
+        interaction = interaction.attachments(&response.attachments)?;
+    }
+
+    if !response.embeds.is_empty() {
+        interaction = interaction.embeds(Some(&response.embeds))?;
+    }
+
+    interaction.await?;
+
+    Ok(())
 }
 
 async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
@@ -49,12 +237,37 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
 
     info!("received command: {:?} in message {:?}", command, message);
 
+    let command_context = CommandContext {
+        guild_id: message.guild_id,
+        author: message.author.clone(),
+    };
+
     let result = match command.name {
-        "help" | "invite" => command_help(context, message).await,
-        "graph" => command_graph(context, message, command.arguments).await,
-        "stats" => command_stats(context, message).await,
-        "dump" => command_dump(context, message, command.arguments).await,
-        _ => Ok(()),
+        "help" | "invite" => command_help(context).await,
+        "graph" => command_graph_from_message(context, &command_context, command.arguments).await,
+        "stats" => command_stats(context).await,
+        "dump" => command_dump_from_message(context, &command_context, command.arguments).await,
+        _ => Err(anyhow!("unknown command")),
+    };
+
+    let allowed_mentions = AllowedMentions {
+        parse: vec![MentionType::Users],
+        replied_user: false,
+        roles: vec![],
+        users: vec![],
+    };
+
+    let result = match result {
+        Ok(response) => {
+            let response_message = context
+                .http
+                .create_message(message.channel_id)
+                .reply(message.id)
+                .allowed_mentions(Some(&allowed_mentions));
+
+            add_command_response_to_message_and_send(response_message, &response).await
+        }
+        error => error.and(Ok(())),
     };
 
     if let Err(error) = result {
@@ -63,6 +276,8 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         context
             .http
             .create_message(message.channel_id)
+            .reply(message.id)
+            .allowed_mentions(Some(&allowed_mentions))
             .content(&format!(
                 "Sorry, there was an error handling that command :warning:\n```\n{}\n```",
                 error
@@ -73,10 +288,34 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
     Ok(true)
 }
 
-async fn command_help(context: &Context, message: &Message) -> Result<()> {
+async fn add_command_response_to_message_and_send<'a>(
+    message: CreateMessage<'a>,
+    response: &'a CommandResponse,
+) -> Result<()> {
+    let mut message = message;
+
+    if let Some(content) = &response.content {
+        message = message.content(content)?;
+    }
+
+    if !response.attachments.is_empty() {
+        message = message.attachments(&response.attachments)?;
+    }
+
+    if !response.embeds.is_empty() {
+        message = message.embeds(&response.embeds)?;
+    }
+
+    message.await?;
+
+    Ok(())
+}
+
+async fn command_help(context: &Context) -> Result<CommandResponse> {
     let description = format!(
         "I'm a Discord Bot that infers relationships between users and draws pretty graphs.\n\
-        I'll only respond to messages that directly mention me, like `@{} help`.",
+        I'll only respond to messages that directly mention me, like `@{} help`,\n\
+        or you can use my slash commands.",
         context.user.name,
     );
 
@@ -91,7 +330,7 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
     };
 
     let invite_url = format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&permissions=117824&scope=bot",
+        "https://discord.com/api/oauth2/authorize?client_id={}&permissions=277025508416&scope=bot",
         context.user.id,
     );
 
@@ -104,21 +343,12 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
         ),
     };
 
-    let footer = EmbedFooter {
-        icon_url: None,
-        proxy_icon_url: None,
-        text: format!(
-            "Sent in response to a command from {}#{:04}",
-            message.author.name, message.author.discriminator,
-        ),
-    };
-
     let embed = Embed {
         author: None,
         color: None,
         description: Some(description),
         fields: vec![commands_field, invite_field],
-        footer: Some(footer),
+        footer: None,
         image: None,
         kind: "rich".to_string(),
         provider: None,
@@ -129,26 +359,18 @@ async fn command_help(context: &Context, message: &Message) -> Result<()> {
         video: None,
     };
 
-    context
-        .http
-        .create_message(message.channel_id)
-        .embeds(&[embed])?
-        .await?;
-
-    Ok(())
+    Ok(CommandResponse {
+        content: None,
+        attachments: vec![],
+        embeds: vec![embed],
+    })
 }
 
-async fn command_graph(
+async fn command_graph_from_message(
     context: &Context,
-    message: &Message,
+    command: &CommandContext,
     mut arguments: Arguments<'_>,
-) -> Result<()> {
-    // TODO: Respond to the command on errors.
-
-    let guild_id = message.guild_id.context("message not to guild")?;
-    let guild_name = context.cache.get_guild(guild_id).await?.name;
-    let attachment_base_name = sanitize_name_for_attachment(&guild_name);
-
+) -> Result<CommandResponse> {
     let color_scheme = match arguments.next() {
         Some("light") => ColorScheme::Light,
         Some("dark") => ColorScheme::Dark,
@@ -160,6 +382,43 @@ async fn command_graph(
     };
 
     let transparent = matches!(arguments.next(), Some("transparent"));
+
+    command_graph(context, command, color_scheme, transparent).await
+}
+
+async fn command_graph_from_interaction(
+    context: &Context,
+    command: &CommandContext,
+    options: &Vec<CommandDataOption>,
+) -> Result<CommandResponse> {
+    let (color_scheme, transparent) = if let Some(CommandDataOption {
+        value: CommandOptionValue::String(style),
+        ..
+    }) = options.iter().find(|i| i.name == "style")
+    {
+        match style.as_str() {
+            "light" => (ColorScheme::Light, false),
+            "dark" => (ColorScheme::Dark, false),
+            "transparent light" => (ColorScheme::Light, true),
+            "transparent dark" => (ColorScheme::Dark, true),
+            _ => anyhow::bail!("{} is not a recognized graph style", style),
+        }
+    } else {
+        (ColorScheme::Dark, false)
+    };
+
+    command_graph(context, command, color_scheme, transparent).await
+}
+
+async fn command_graph(
+    context: &Context,
+    command: &CommandContext,
+    color_scheme: ColorScheme,
+    transparent: bool,
+) -> Result<CommandResponse> {
+    let guild_id = command.guild_id.context("message not to guild")?;
+    let guild_name = context.cache.get_guild(guild_id).await?.name;
+    let attachment_base_name = sanitize_name_for_attachment(&guild_name);
 
     let graph = {
         let social = context.social.lock();
@@ -173,7 +432,7 @@ async fn command_graph(
         .to_dot(
             context,
             guild_id,
-            Some(&message.author),
+            Some(&command.author),
             color_scheme,
             transparent,
             &context.font_name,
@@ -188,82 +447,126 @@ async fn command_graph(
         png
     };
 
-    context
-        .http
-        .create_message(message.channel_id)
-        .attachments(&[Attachment::from_bytes(
+    Ok(CommandResponse {
+        content: None,
+        attachments: vec![Attachment::from_bytes(
             attachment_base_name + ".png",
             png,
             0,
-        )])?
-        .await?;
-
-    Ok(())
+        )],
+        embeds: vec![],
+    })
 }
 
-async fn command_stats(context: &Context, message: &Message) -> Result<()> {
-    context
-        .http
-        .create_message(message.channel_id)
-        .content(&format!("{:?}", context.cache.get_stats()))?
-        .await?;
-
-    Ok(())
+async fn command_stats(context: &Context) -> Result<CommandResponse> {
+    Ok(CommandResponse {
+        content: Some(format!("{:?}", context.cache.get_stats())),
+        attachments: vec![],
+        embeds: vec![],
+    })
 }
 
-async fn command_dump(
+async fn command_dump_from_message(
     context: &Context,
-    message: &Message,
+    command: &CommandContext,
     mut arguments: Arguments<'_>,
-) -> Result<()> {
-    if !context.owners.contains(&message.author.id) {
+) -> Result<CommandResponse> {
+    if !context.owners.contains(&command.author.id) {
         info!(
             "{} tried to run dump command but isn't an owner",
-            message.author.id,
+            command.author.id,
         );
-        return Ok(());
+
+        // TODO: Fail silently.
+        return Ok(CommandResponse {
+            content: None,
+            attachments: vec![],
+            embeds: vec![],
+        });
     }
 
     if let Some(guild_id) = arguments.next() {
         let guild_id: u64 = guild_id.parse()?;
         let guild_id = Id::new(guild_id);
 
-        let guild_name = context.cache.get_guild(guild_id).await?.name;
-        let attachment_base_name = sanitize_name_for_attachment(&guild_name);
+        command_dump_with_guild(context, guild_id).await
+    } else {
+        command_dump_without_guild(context).await
+    }
+}
 
-        let graph = {
-            let social = context.social.lock();
+async fn command_dump_from_interaction(
+    context: &Context,
+    command: &CommandContext,
+    options: &Vec<CommandDataOption>,
+) -> Result<CommandResponse> {
+    if !context.owners.contains(&command.author.id) {
+        info!(
+            "{} tried to run dump command but isn't an owner",
+            command.author.id,
+        );
 
-            social
-                .build_guild_graph(guild_id)
-                .context("no graph for guild")?
-        };
-
-        let dot = graph
-            .to_dot(
-                context,
-                guild_id,
-                None,
-                ColorScheme::Light,
-                false,
-                &context.font_name,
-            )
-            .await?;
-
-        let png = render_dot(&dot).await?;
-
-        context
-            .http
-            .create_message(message.channel_id)
-            .attachments(&[
-                Attachment::from_bytes(attachment_base_name.clone() + ".dot", dot.into_bytes(), 0),
-                Attachment::from_bytes(attachment_base_name + ".png", png, 1),
-            ])?
-            .await?;
-
-        return Ok(());
+        // TODO: Fail silently.
+        return Ok(CommandResponse {
+            content: None,
+            attachments: vec![],
+            embeds: vec![],
+        });
     }
 
+    if let Some(CommandDataOption {
+        value: CommandOptionValue::String(guild_id),
+        ..
+    }) = options.iter().find(|i| i.name == "guild")
+    {
+        let guild_id: u64 = guild_id.parse()?;
+        let guild_id = Id::new(guild_id);
+
+        command_dump_with_guild(context, guild_id).await
+    } else {
+        command_dump_without_guild(context).await
+    }
+}
+
+async fn command_dump_with_guild(
+    context: &Context,
+    guild_id: Id<GuildMarker>,
+) -> Result<CommandResponse> {
+    let guild_name = context.cache.get_guild(guild_id).await?.name;
+    let attachment_base_name = sanitize_name_for_attachment(&guild_name);
+
+    let graph = {
+        let social = context.social.lock();
+
+        social
+            .build_guild_graph(guild_id)
+            .context("no graph for guild")?
+    };
+
+    let dot = graph
+        .to_dot(
+            context,
+            guild_id,
+            None,
+            ColorScheme::Light,
+            false,
+            &context.font_name,
+        )
+        .await?;
+
+    let png = render_dot(&dot).await?;
+
+    Ok(CommandResponse {
+        content: None,
+        attachments: vec![
+            Attachment::from_bytes(attachment_base_name.clone() + ".dot", dot.into_bytes(), 0),
+            Attachment::from_bytes(attachment_base_name + ".png", png, 1),
+        ],
+        embeds: vec![],
+    })
+}
+
+async fn command_dump_without_guild(context: &Context) -> Result<CommandResponse> {
     let guild_ids = {
         let social = context.social.lock();
         social.get_all_guild_ids()
@@ -284,13 +587,11 @@ async fn command_dump(
     let mut content = "Largest 20 guilds:\n".to_owned();
     content.push_str(&guilds.join("\n"));
 
-    context
-        .http
-        .create_message(message.channel_id)
-        .content(&content)?
-        .await?;
-
-    Ok(())
+    Ok(CommandResponse {
+        content: Some(content),
+        attachments: vec![],
+        embeds: vec![],
+    })
 }
 
 fn sanitize_name_for_attachment(name: &str) -> String {
