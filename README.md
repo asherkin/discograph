@@ -2,7 +2,7 @@
 
 A Discord Bot that infers relationships between users and draws pretty graphs.
 
-Click [here](https://discord.com/api/oauth2/authorize?client_id=735929260073549854&permissions=277025508416&scope=bot) to invite the bot to your server.
+Click [here](https://discord.com/api/oauth2/authorize?client_id=735929260073549854&permissions=274878024768&scope=bot%20applications.commands) to invite the bot to your server.
 
 <img src="https://users.alliedmods.net/~asherkin/public/AlliedModders.png" alt="Graph of AlliedModders Discord" height="400">
 

@@ -96,14 +96,14 @@ async fn process_interaction(context: &Context, interaction: Interaction) {
                 .as_millis() as u64;
 
             let result = sqlx::query("INSERT INTO events (timestamp, guild, channel, source, target, reason) VALUES (?, ?, ?, ?, ?, ?)")
-            .bind(timestamp)
-            .bind(interaction.guild.get())
-            .bind(interaction.channel.get())
-            .bind(change.source.get())
-            .bind(change.target.get())
-            .bind(change.reason as u8)
-            .execute(pool)
-            .await;
+                .bind(timestamp)
+                .bind(interaction.guild.get())
+                .bind(interaction.channel.get())
+                .bind(change.source.get())
+                .bind(change.target.get())
+                .bind(change.reason as u8)
+                .execute(pool)
+                .await;
 
             if let Err(error) = result {
                 error!("query error: {}", error);

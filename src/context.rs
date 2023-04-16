@@ -1,12 +1,13 @@
 use parking_lot::Mutex;
 use sqlx::MySqlPool;
+use tokio::time::Instant;
 use twilight_gateway::MessageSender;
 use twilight_http::Client;
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::user::CurrentUser;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::cache::Cache;
@@ -24,4 +25,5 @@ pub struct Context {
     pub social: Arc<Mutex<SocialGraph>>,
     pub pool: Option<MySqlPool>,
     pub font_name: String,
+    pub guilds_with_broken_commands: Arc<Mutex<HashMap<Id<GuildMarker>, Option<Instant>>>>,
 }

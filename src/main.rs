@@ -113,6 +113,8 @@ async fn main() -> Result<()> {
         Id::<GuildMarker>::from_str(&value).expect("Invalid MANAGEMENT_GUILD value")
     });
 
+    let guilds_with_broken_commands = Arc::new(Mutex::new(HashMap::new()));
+
     let http_clone = http.clone();
     tokio::spawn(async move {
         http_clone
@@ -333,6 +335,7 @@ async fn main() -> Result<()> {
             social: social.clone(),
             pool: pool.clone(),
             font_name: font_name.clone(),
+            guilds_with_broken_commands: guilds_with_broken_commands.clone(),
         };
 
         tokio::spawn(async move {

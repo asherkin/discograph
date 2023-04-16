@@ -1,12 +1,15 @@
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use futures::future::join_all;
 use futures::FutureExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process;
+use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 use twilight_command_parser::{Arguments, CommandParserConfig, Parser};
+use twilight_http::error::ErrorType;
 use twilight_http::request::application::interaction::UpdateResponse;
 use twilight_http::request::channel::message::CreateMessage;
 use twilight_model::application::command::{
@@ -102,6 +105,7 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
 
             let http = context.http.clone();
             let application_id = context.application_id;
+            let guilds_with_broken_commands = context.guilds_with_broken_commands.clone();
 
             tokio::spawn(async move {
                 match http
@@ -110,10 +114,18 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
                     .await
                 {
                     Ok(_) => debug!("setup application commands for guild {}", guild_id),
-                    Err(err) => warn!(
-                        "failed to setup application commands for guild {}: {:?}",
-                        guild_id, err
-                    ),
+                    Err(err) => {
+                        warn!(
+                            "failed to setup application commands for guild {}: {:?}",
+                            guild_id, err
+                        );
+
+                        if let ErrorType::Response { status, .. } = err.kind() {
+                            if *status == 403 {
+                                guilds_with_broken_commands.lock().insert(guild_id, None);
+                            }
+                        }
+                    }
                 }
             });
 
@@ -310,6 +322,51 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
             .await?;
     }
 
+    if let Some(guild_id) = &message.guild_id {
+        let send_warning = {
+            let mut guilds_with_broken_commands = context.guilds_with_broken_commands.lock();
+
+            match guilds_with_broken_commands.get_mut(guild_id) {
+                None => false,
+                Some(last @ None) => {
+                    *last = Some(Instant::now());
+                    true
+                }
+                Some(Some(last))
+                    if Instant::now().duration_since(*last) > Duration::from_secs(60 * 60 * 24) =>
+                {
+                    *last = Instant::now();
+                    true
+                }
+                Some(Some(_)) => false,
+            }
+        };
+
+        if send_warning {
+            info!("warning guild {} about lack of slash commands", guild_id);
+
+            let invite_url = format!(
+                "https://discord.com/api/oauth2/authorize?client_id={}&permissions=274878024768&scope=bot%20applications.commands",
+                context.user.id,
+            );
+
+            let content = format!(
+                "Hi there!\n{} has migrated to slash commands, but it's missing permission to set them up in this server.\n\
+                Please kick the bot and then re-invite it using below link. This message will only be shown once per day.\n{}",
+                context.user.name,
+                invite_url,
+            );
+
+            context
+                .http
+                .create_message(message.channel_id)
+                .reply(message.id)
+                .allowed_mentions(Some(&allowed_mentions))
+                .content(&content)?
+                .await?;
+        }
+    }
+
     Ok(true)
 }
 
@@ -355,7 +412,7 @@ async fn command_help(context: &Context) -> Result<CommandResponse> {
     };
 
     let invite_url = format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&permissions=277025508416&scope=bot",
+        "https://discord.com/api/oauth2/authorize?client_id={}&permissions=274878024768&scope=bot%20applications.commands",
         context.user.id,
     );
 
