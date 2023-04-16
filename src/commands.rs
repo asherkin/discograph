@@ -21,6 +21,7 @@ use twilight_model::channel::message::{AllowedMentions, MentionType};
 use twilight_model::channel::Message;
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::event::Event::{GuildCreate, InteractionCreate, MessageCreate};
+use twilight_model::gateway::CloseFrame;
 use twilight_model::http::attachment::Attachment;
 use twilight_model::http::interaction::{InteractionResponse, InteractionResponseType};
 use twilight_model::id::marker::GuildMarker;
@@ -234,6 +235,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
     config.add_command("graph", false);
     config.add_command("stats", false);
     config.add_command("dump", false);
+    config.add_command("bounce", false);
 
     let parser = Parser::new(config);
     let command = match parser.parse(&message.content) {
@@ -253,6 +255,23 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
         "graph" => command_graph_from_message(context, &command_context, command.arguments).await,
         "stats" => command_stats(context).await,
         "dump" => command_dump_from_message(context, &command_context, command.arguments).await,
+        "bounce" => {
+            if context.owners.contains(&command_context.author.id) {
+                context.shard.close(CloseFrame::NORMAL)?;
+
+                Ok(CommandResponse {
+                    content: Some("Restarting shard...".into()),
+                    attachments: vec![],
+                    embeds: vec![],
+                })
+            } else {
+                Ok(CommandResponse {
+                    content: None,
+                    attachments: vec![],
+                    embeds: vec![],
+                })
+            }
+        }
         _ => Err(anyhow!("unknown command")),
     };
 

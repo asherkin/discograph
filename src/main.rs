@@ -8,6 +8,7 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::Connection;
+use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 use twilight_gateway::stream::ShardEventStream;
 use twilight_gateway::{stream, Config, Event};
@@ -18,16 +19,17 @@ use twilight_model::application::command::{
 };
 use twilight_model::gateway::payload::outgoing::UpdatePresence;
 use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
-use twilight_model::gateway::{CloseFrame, Intents};
+use twilight_model::gateway::{CloseFrame, Intents, ShardId};
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::oauth::team::TeamMembershipState;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::cache::Cache;
 use crate::context::Context;
@@ -38,6 +40,22 @@ fn get_optional_env(key: &str) -> Option<String> {
         Ok(value) => Some(value),
         Err(env::VarError::NotPresent) => None,
         Err(error) => panic!("{}", error),
+    }
+}
+
+struct LastPresenceUpdate {
+    guild_counts: HashMap<ShardId, usize>,
+    when: Instant,
+    count: usize,
+}
+
+impl LastPresenceUpdate {
+    fn new() -> Self {
+        Self {
+            guild_counts: HashMap::new(),
+            when: Instant::now(),
+            count: 0,
+        }
     }
 }
 
@@ -184,22 +202,29 @@ async fn main() -> Result<()> {
         .await?
         .collect();
 
+    // let mut shards: Vec<_> =
+    //     stream::create_range(0..3, 3, config, |_, config| config.build()).collect();
+
+    let shard_senders: Vec<_> = shards.iter().map(|shard| shard.sender()).collect();
+
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let shutdown_clone = shutdown.clone();
-    let shard_senders: Vec<_> = shards.iter().map(|shard| shard.sender()).collect();
+    let shutdown_senders = shard_senders.clone();
 
     ctrlc::set_handler(move || {
         info!("ctrlc handler called");
 
         shutdown_clone.store(true, Ordering::Relaxed);
 
-        for sender in &shard_senders {
+        for sender in &shutdown_senders {
             if let Err(error) = sender.close(CloseFrame::NORMAL) {
                 warn!(?error, "failed to send close frame");
             }
         }
     })?;
+
+    let last_presence_update = Arc::new(Mutex::new(LastPresenceUpdate::new()));
 
     let mut stream = ShardEventStream::new(shards.iter_mut());
 
@@ -237,6 +262,65 @@ async fn main() -> Result<()> {
         // Update the cache with the event.
         // Done before we spawn the tasks to ensure the cache is updated.
         cache.update(&event);
+
+        let needs_presence_update = matches!(&event, Event::Ready(_) | Event::Resumed);
+        let wants_presence_update = matches!(&event, Event::GuildCreate(_) | Event::GuildDelete(_));
+
+        if needs_presence_update || wants_presence_update {
+            {
+                let mut last_presence_update = last_presence_update.lock();
+                let guild_counts = &mut last_presence_update.guild_counts;
+
+                match &event {
+                    Event::Ready(_) => *guild_counts.entry(shard.id()).or_insert(0) = 0,
+                    Event::GuildCreate(_) => *guild_counts.entry(shard.id()).or_insert(0) += 1,
+                    Event::GuildDelete(_) => *guild_counts.entry(shard.id()).or_insert(0) -= 1,
+                    _ => {}
+                }
+            }
+
+            let shard_senders = shard_senders.clone();
+            let last_presence_update = last_presence_update.clone();
+
+            tokio::spawn(async move {
+                if !needs_presence_update {
+                    let last = last_presence_update.lock().when;
+                    tokio::time::sleep_until(last + Duration::from_secs(2)).await;
+                }
+
+                let mut last_presence_update = last_presence_update.lock();
+
+                let count = last_presence_update.guild_counts.values().sum();
+                if !needs_presence_update && count == last_presence_update.count {
+                    return;
+                }
+
+                let activity: Activity = MinimalActivity {
+                    kind: ActivityType::Watching,
+                    name: format!(
+                        "{} {}",
+                        format_guild_count(count),
+                        if count == 1 { "server" } else { "servers" }
+                    ),
+                    url: None,
+                }
+                .into();
+
+                debug!("sending presence update with {} guilds", count);
+
+                let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)
+                    .expect("malformed presence payload");
+
+                for shard in &shard_senders {
+                    if let Err(error) = shard.command(&message) {
+                        warn!(?error, ?message, "failed to update presence");
+                    }
+                }
+
+                last_presence_update.when = Instant::now();
+                last_presence_update.count = count;
+            });
+        }
 
         let context = Context {
             shard: shard.sender(),
@@ -284,19 +368,6 @@ async fn get_application_id_and_owners(
 }
 
 async fn handle_event(context: &Context, event: &Event) -> Result<()> {
-    if let Event::Ready(_) | Event::Resumed = event {
-        let activity: Activity = MinimalActivity {
-            kind: ActivityType::Watching,
-            name: format!("| @{} help", context.user.name),
-            url: None,
-        }
-        .into();
-
-        let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)?;
-
-        context.shard.command(&message)?;
-    }
-
     if commands::handle_event(context, event).await? {
         // If the command processor consumed it, don't do any more processing.
         return Ok(());
@@ -305,4 +376,41 @@ async fn handle_event(context: &Context, event: &Event) -> Result<()> {
     social::handle_event(context, event).await?;
 
     Ok(())
+}
+
+fn format_guild_count(count: usize) -> String {
+    if count > 100_000 {
+        format!("{:.0}k", (count as f64) / 1000.0)
+    } else if count > 10_000 {
+        format!("{:.1}k", (count as f64) / 1000.0)
+    } else if count > 1_000 {
+        format!("{},{:0.3}", count / 1000, count - ((count / 1000) * 1000))
+    } else {
+        format!("{}", count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_guild_count;
+
+    #[test]
+    fn test_format_guild_count_small() {
+        assert_eq!(format_guild_count(5), "5");
+    }
+
+    #[test]
+    fn test_format_guild_count_large() {
+        assert_eq!(format_guild_count(1450), "1,450");
+    }
+
+    #[test]
+    fn test_format_guild_count_huge() {
+        assert_eq!(format_guild_count(12345), "12.3k");
+    }
+
+    #[test]
+    fn test_format_guild_count_gigantic() {
+        assert_eq!(format_guild_count(123456), "123k");
+    }
 }
