@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
         debug!("DATABASE_URL set, connecting to database");
 
         let pool = MySqlPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_secs(5))
+            .acquire_timeout(Duration::from_secs(5))
             .test_before_acquire(false)
             .connect(&url)
             .await?;
@@ -115,83 +115,7 @@ async fn main() -> Result<()> {
 
     let guilds_with_broken_commands = Arc::new(Mutex::new(HashMap::new()));
 
-    let http_clone = http.clone();
-    tokio::spawn(async move {
-        http_clone
-            .interaction(application_id)
-            .set_global_commands(&[
-                Command {
-                    application_id: None,
-                    default_member_permissions: None,
-                    dm_permission: Some(true),
-                    description: "Show help info and commands.".to_string(),
-                    description_localizations: None,
-                    guild_id: None,
-                    id: None,
-                    kind: CommandType::ChatInput,
-                    name: "help".to_string(),
-                    name_localizations: None,
-                    nsfw: None,
-                    options: Vec::new(),
-                    version: Id::new(1),
-                },
-                Command {
-                    application_id: None,
-                    default_member_permissions: None,
-                    dm_permission: Some(false),
-                    description: "Get a preview-quality graph image.".to_string(),
-                    description_localizations: None,
-                    guild_id: None,
-                    id: None,
-                    kind: CommandType::ChatInput,
-                    name: "graph".to_string(),
-                    name_localizations: None,
-                    nsfw: None,
-                    options: vec![CommandOption {
-                        autocomplete: None,
-                        channel_types: None,
-                        choices: Some(vec![
-                            CommandOptionChoice {
-                                name: "Light".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("light".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Dark".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("dark".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Transparent Light".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("transparent light".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Transparent Dark".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("transparent dark".into()),
-                            },
-                        ]),
-                        description: "Style of graph to render.".to_string(),
-                        description_localizations: None,
-                        kind: CommandOptionType::String,
-                        max_length: None,
-                        max_value: None,
-                        min_length: None,
-                        min_value: None,
-                        name: "style".to_string(),
-                        name_localizations: None,
-                        options: None,
-                        required: Some(false),
-                    }],
-                    version: Id::new(1),
-                },
-            ])
-            .await
-            .expect("failed to setup global commands");
-
-        debug!("setup global commands");
-    });
+    setup_global_commands(http.clone(), application_id);
 
     let intents = Intents::GUILDS
         | Intents::GUILD_MESSAGES
@@ -348,6 +272,84 @@ async fn main() -> Result<()> {
     info!("event stream ended, exiting");
 
     Ok(())
+}
+
+fn setup_global_commands(http: Arc<Client>, application_id: Id<ApplicationMarker>) {
+    tokio::spawn(async move {
+        http.interaction(application_id)
+            .set_global_commands(&[
+                Command {
+                    application_id: None,
+                    default_member_permissions: None,
+                    dm_permission: Some(true),
+                    description: "Show help info and commands.".to_string(),
+                    description_localizations: None,
+                    guild_id: None,
+                    id: None,
+                    kind: CommandType::ChatInput,
+                    name: "help".to_string(),
+                    name_localizations: None,
+                    nsfw: None,
+                    options: Vec::new(),
+                    version: Id::new(1),
+                },
+                Command {
+                    application_id: None,
+                    default_member_permissions: None,
+                    dm_permission: Some(false),
+                    description: "Get a preview-quality graph image.".to_string(),
+                    description_localizations: None,
+                    guild_id: None,
+                    id: None,
+                    kind: CommandType::ChatInput,
+                    name: "graph".to_string(),
+                    name_localizations: None,
+                    nsfw: None,
+                    options: vec![CommandOption {
+                        autocomplete: None,
+                        channel_types: None,
+                        choices: Some(vec![
+                            CommandOptionChoice {
+                                name: "Light".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("light".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Dark".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("dark".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Transparent Light".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("transparent light".into()),
+                            },
+                            CommandOptionChoice {
+                                name: "Transparent Dark".to_string(),
+                                name_localizations: None,
+                                value: CommandOptionChoiceValue::String("transparent dark".into()),
+                            },
+                        ]),
+                        description: "Style of graph to render.".to_string(),
+                        description_localizations: None,
+                        kind: CommandOptionType::String,
+                        max_length: None,
+                        max_value: None,
+                        min_length: None,
+                        min_value: None,
+                        name: "style".to_string(),
+                        name_localizations: None,
+                        options: None,
+                        required: Some(false),
+                    }],
+                    version: Id::new(1),
+                },
+            ])
+            .await
+            .expect("failed to setup global commands");
+
+        debug!("setup global commands");
+    });
 }
 
 async fn get_application_id_and_owners(

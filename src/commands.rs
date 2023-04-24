@@ -23,7 +23,9 @@ use twilight_model::channel::message::embed::{Embed, EmbedField};
 use twilight_model::channel::message::{AllowedMentions, MentionType};
 use twilight_model::channel::Message;
 use twilight_model::gateway::event::Event;
-use twilight_model::gateway::event::Event::{GuildCreate, InteractionCreate, MessageCreate};
+use twilight_model::gateway::event::Event::{
+    GuildCreate, GuildDelete, InteractionCreate, MessageCreate,
+};
 use twilight_model::gateway::CloseFrame;
 use twilight_model::http::attachment::Attachment;
 use twilight_model::http::interaction::{InteractionResponse, InteractionResponseType};
@@ -48,7 +50,12 @@ struct CommandResponse {
 
 pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
     match event {
-        GuildCreate(guild) => {
+        GuildCreate(guild)
+            if !context
+                .guilds_with_broken_commands
+                .lock()
+                .contains_key(&guild.id) =>
+        {
             let guild_id = guild.id;
 
             let commands = if Some(guild_id) == context.management_guild {
@@ -113,7 +120,9 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
                     .set_guild_commands(guild_id, &commands)
                     .await
                 {
-                    Ok(_) => debug!("setup application commands for guild {}", guild_id),
+                    Ok(_) => {
+                        debug!("setup application commands for guild {}", guild_id);
+                    }
                     Err(err) => {
                         warn!(
                             "failed to setup application commands for guild {}: {:?}",
@@ -128,6 +137,11 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<bool> {
                     }
                 }
             });
+
+            Ok(false)
+        }
+        GuildDelete(guild) if !guild.unavailable => {
+            context.guilds_with_broken_commands.lock().remove(&guild.id);
 
             Ok(false)
         }
