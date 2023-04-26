@@ -245,12 +245,10 @@ async fn add_command_response_to_interaction_and_send<'a>(
 }
 
 async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
-    // Ignore messages from bots (including ourself)
-    if message.author.bot {
+    // Ignore messages from bots (including ourself) or messages with missing content
+    if message.author.bot || message.content.is_empty() {
         return Ok(false);
     }
-
-    debug!("new message: {}", message.content);
 
     // TODO: I think we want to switch back to our own command parsing.
     let mut config = CommandParserConfig::new();

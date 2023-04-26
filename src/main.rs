@@ -117,10 +117,11 @@ async fn main() -> Result<()> {
 
     tokio::spawn(setup_global_commands(http.clone(), application_id));
 
-    let intents = Intents::GUILDS
-        | Intents::GUILD_MESSAGES
-        | Intents::GUILD_MESSAGE_REACTIONS
-        | Intents::MESSAGE_CONTENT;
+    let mut intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::GUILD_MESSAGE_REACTIONS;
+
+    if let Some("1") = get_optional_env("DISCOGRAPH_MESSAGE_CONTENT").as_deref() {
+        intents |= Intents::MESSAGE_CONTENT;
+    }
 
     let config = Config::new(token, intents);
 
