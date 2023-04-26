@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
 
     let guilds_with_broken_commands = Arc::new(Mutex::new(HashMap::new()));
 
-    setup_global_commands(http.clone(), application_id);
+    tokio::spawn(setup_global_commands(http.clone(), application_id));
 
     let intents = Intents::GUILDS
         | Intents::GUILD_MESSAGES
@@ -151,6 +151,19 @@ async fn main() -> Result<()> {
     })?;
 
     let last_presence_update = Arc::new(Mutex::new(LastPresenceUpdate::new()));
+
+    if let (Some(token), Some(bot_id)) = (
+        get_optional_env("DISCOGRAPH_TOPGG_TOKEN"),
+        get_optional_env("DISCOGRAPH_TOPGG_BOT_ID"),
+    ) {
+        tokio::spawn(start_posting_stats(
+            token,
+            bot_id,
+            last_presence_update.clone(),
+        ));
+    } else {
+        debug!("top.gg stats posting not configured");
+    }
 
     let mut stream = ShardEventStream::new(shards.iter_mut());
 
@@ -198,9 +211,17 @@ async fn main() -> Result<()> {
                 let guild_counts = &mut last_presence_update.guild_counts;
 
                 match &event {
-                    Event::Ready(_) => *guild_counts.entry(shard.id()).or_insert(0) = 0,
-                    Event::GuildCreate(_) => *guild_counts.entry(shard.id()).or_insert(0) += 1,
-                    Event::GuildDelete(_) => *guild_counts.entry(shard.id()).or_insert(0) -= 1,
+                    Event::Ready(_) => {
+                        guild_counts.insert(shard.id(), 0);
+                    }
+                    Event::GuildCreate(_) => {
+                        let value = guild_counts.entry(shard.id()).or_insert(0);
+                        *value = value.saturating_add(1);
+                    }
+                    Event::GuildDelete(_) => {
+                        let value = guild_counts.entry(shard.id()).or_insert(0);
+                        *value = value.saturating_sub(1);
+                    }
                     _ => {}
                 }
             }
@@ -274,82 +295,127 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn setup_global_commands(http: Arc<Client>, application_id: Id<ApplicationMarker>) {
-    tokio::spawn(async move {
-        http.interaction(application_id)
-            .set_global_commands(&[
-                Command {
-                    application_id: None,
-                    default_member_permissions: None,
-                    dm_permission: Some(true),
-                    description: "Show help info and commands.".to_string(),
-                    description_localizations: None,
-                    guild_id: None,
-                    id: None,
-                    kind: CommandType::ChatInput,
-                    name: "help".to_string(),
-                    name_localizations: None,
-                    nsfw: None,
-                    options: Vec::new(),
-                    version: Id::new(1),
-                },
-                Command {
-                    application_id: None,
-                    default_member_permissions: None,
-                    dm_permission: Some(false),
-                    description: "Get a preview-quality graph image.".to_string(),
-                    description_localizations: None,
-                    guild_id: None,
-                    id: None,
-                    kind: CommandType::ChatInput,
-                    name: "graph".to_string(),
-                    name_localizations: None,
-                    nsfw: None,
-                    options: vec![CommandOption {
-                        autocomplete: None,
-                        channel_types: None,
-                        choices: Some(vec![
-                            CommandOptionChoice {
-                                name: "Light".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("light".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Dark".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("dark".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Transparent Light".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("transparent light".into()),
-                            },
-                            CommandOptionChoice {
-                                name: "Transparent Dark".to_string(),
-                                name_localizations: None,
-                                value: CommandOptionChoiceValue::String("transparent dark".into()),
-                            },
-                        ]),
-                        description: "Style of graph to render.".to_string(),
-                        description_localizations: None,
-                        kind: CommandOptionType::String,
-                        max_length: None,
-                        max_value: None,
-                        min_length: None,
-                        min_value: None,
-                        name: "style".to_string(),
-                        name_localizations: None,
-                        options: None,
-                        required: Some(false),
-                    }],
-                    version: Id::new(1),
-                },
-            ])
-            .await
-            .expect("failed to setup global commands");
+async fn start_posting_stats(
+    token: String,
+    bot_id: String,
+    last_presence_update: Arc<Mutex<LastPresenceUpdate>>,
+) {
+    use dbl::types::ShardStats;
 
-        debug!("setup global commands");
-    });
+    let client = dbl::Client::new(token).expect("failed to create top.gg api client");
+
+    let bot_id: u64 = bot_id.parse().expect("invalid top.gg bot id format");
+
+    info!("starting posting stats to top.gg for {}", bot_id);
+
+    // Wait 5 minutes for most guilds to have connected.
+    tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+
+    loop {
+        let (shard_count, server_count): (usize, usize) = {
+            let last_presence_update = last_presence_update.lock();
+
+            (
+                last_presence_update.guild_counts.len(),
+                last_presence_update.guild_counts.values().sum(),
+            )
+        };
+
+        info!(?shard_count, ?server_count, "posting stats to top.gg");
+
+        let result = client
+            .update_stats(
+                bot_id,
+                ShardStats::Cumulative {
+                    server_count: server_count as u64,
+                    shard_count: Some(shard_count as u64),
+                },
+            )
+            .await;
+
+        if let Err(error) = result {
+            warn!(?error, "failed to post stats to top.gg");
+        }
+
+        // 30 minutes between updates.
+        tokio::time::sleep(Duration::from_secs(30 * 60)).await;
+    }
+}
+
+async fn setup_global_commands(http: Arc<Client>, application_id: Id<ApplicationMarker>) {
+    http.interaction(application_id)
+        .set_global_commands(&[
+            Command {
+                application_id: None,
+                default_member_permissions: None,
+                dm_permission: Some(true),
+                description: "Show help info and commands.".to_string(),
+                description_localizations: None,
+                guild_id: None,
+                id: None,
+                kind: CommandType::ChatInput,
+                name: "help".to_string(),
+                name_localizations: None,
+                nsfw: None,
+                options: Vec::new(),
+                version: Id::new(1),
+            },
+            Command {
+                application_id: None,
+                default_member_permissions: None,
+                dm_permission: Some(false),
+                description: "Get a preview-quality graph image.".to_string(),
+                description_localizations: None,
+                guild_id: None,
+                id: None,
+                kind: CommandType::ChatInput,
+                name: "graph".to_string(),
+                name_localizations: None,
+                nsfw: None,
+                options: vec![CommandOption {
+                    autocomplete: None,
+                    channel_types: None,
+                    choices: Some(vec![
+                        CommandOptionChoice {
+                            name: "Light".to_string(),
+                            name_localizations: None,
+                            value: CommandOptionChoiceValue::String("light".into()),
+                        },
+                        CommandOptionChoice {
+                            name: "Dark".to_string(),
+                            name_localizations: None,
+                            value: CommandOptionChoiceValue::String("dark".into()),
+                        },
+                        CommandOptionChoice {
+                            name: "Transparent Light".to_string(),
+                            name_localizations: None,
+                            value: CommandOptionChoiceValue::String("transparent light".into()),
+                        },
+                        CommandOptionChoice {
+                            name: "Transparent Dark".to_string(),
+                            name_localizations: None,
+                            value: CommandOptionChoiceValue::String("transparent dark".into()),
+                        },
+                    ]),
+                    description: "Style of graph to render.".to_string(),
+                    description_localizations: None,
+                    kind: CommandOptionType::String,
+                    max_length: None,
+                    max_value: None,
+                    min_length: None,
+                    min_value: None,
+                    name: "style".to_string(),
+                    name_localizations: None,
+                    options: None,
+                    required: Some(false),
+                }],
+                version: Id::new(1),
+            },
+        ])
+        .await
+        .expect("failed to setup global commands");
+
+    debug!("setup global commands");
 }
 
 async fn get_application_id_and_owners(

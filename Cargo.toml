@@ -1,12 +1,13 @@
 [package]
 name = "discograph"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Erin Baker <asherkin@limetech.io>"]
 license = "MIT OR Apache-2.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 ctrlc = "3"
+dbl-rs = "0.3"
 futures = "0.3"
 lru = "0.10"
 parking_lot = "0.12"
