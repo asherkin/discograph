@@ -119,6 +119,10 @@ async fn main() -> Result<()> {
 
     let mut intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::GUILD_MESSAGE_REACTIONS;
 
+    if let Some("1") = get_optional_env("DISCOGRAPH_SERVER_MEMBERS").as_deref() {
+        intents |= Intents::GUILD_MEMBERS;
+    }
+
     if let Some("1") = get_optional_env("DISCOGRAPH_MESSAGE_CONTENT").as_deref() {
         intents |= Intents::MESSAGE_CONTENT;
     }

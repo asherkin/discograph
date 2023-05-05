@@ -273,8 +273,14 @@ impl Cache {
         match event {
             Event::ChannelCreate(channel) => self.put_channel(channel),
             Event::ChannelUpdate(channel) => self.put_channel(channel),
+            Event::ChannelDelete(channel) => {
+                self.channels.lock().pop(&channel.id);
+            }
             Event::GuildCreate(guild) => self.put_full_guild(guild),
             Event::GuildUpdate(guild) => self.put_guild(guild),
+            Event::GuildDelete(guild) => {
+                self.guilds.lock().pop(&guild.id);
+            }
             Event::MemberAdd(member) => self.put_full_member(member.guild_id, member),
             Event::MemberUpdate(member) => self.put_member_update(member),
             Event::MemberChunk(chunk) => {
@@ -295,15 +301,30 @@ impl Cache {
                     }
                 }
             }
+            Event::MemberRemove(member) => {
+                self.put_user(&member.user);
+                self.members.lock().pop(&(member.guild_id, member.user.id));
+            }
             Event::MessageCreate(message) => self.put_message(message),
             Event::MessageUpdate(message) => self.put_message_update(message),
+            Event::MessageDelete(message) => {
+                self.messages.lock().pop(&message.id);
+            }
             Event::ReactionAdd(reaction) => {
+                if let (Some(guild_id), Some(member)) = (reaction.guild_id, &reaction.member) {
+                    self.put_full_member(guild_id, member);
+                }
+            }
+            Event::ReactionRemove(reaction) => {
                 if let (Some(guild_id), Some(member)) = (reaction.guild_id, &reaction.member) {
                     self.put_full_member(guild_id, member);
                 }
             }
             Event::RoleCreate(role) => self.put_role(&role.role),
             Event::RoleUpdate(role) => self.put_role(&role.role),
+            Event::RoleDelete(role) => {
+                self.roles.lock().pop(&role.role_id);
+            }
             Event::InteractionCreate(interaction) => {
                 if let Some(message) = &interaction.message {
                     self.put_message(message);

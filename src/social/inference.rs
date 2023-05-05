@@ -37,12 +37,10 @@ impl Interaction {
             .guild_id
             .context("tried to create an interaction from a message not sent to a guild")?;
 
-        // TODO: This probably needs to become a distinct field, as there can
-        //       be interesting interactions against the direct mention.
-        //       e.g. Reply-to-self and mention someone else, to reference a previous message.
-        let reply_to = referenced_message
-            .map(|m| m.author_id)
-            .or_else(|| parse_direct_mention(&message.content));
+        // We prefer a parsed mention over a reply, as a parsed mention with reply is usually
+        // someone directing a message to someone else.
+        let reply_to = parse_direct_mention(&message.content)
+            .or_else(|| referenced_message.map(|m| m.author_id));
 
         let user_mentions = message
             .mentions
