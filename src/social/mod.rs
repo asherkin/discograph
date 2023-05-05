@@ -73,20 +73,44 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
 
 async fn process_interaction(context: &Context, interaction: Interaction) {
     let interaction_string = interaction.to_string(&context.cache).await;
-    info!("{}", interaction_string);
+    let mut debug_lines = vec![interaction_string];
 
     let changes = {
         let mut social = context.social.lock();
 
         let changes = social.infer(&interaction);
         for change in &changes {
-            info!("-> {:?}", change);
+            debug_lines.push(format!("-> {}", change));
         }
 
         social.apply(&interaction, &changes);
 
         changes
     };
+
+    for line in &debug_lines {
+        info!("{}", line);
+    }
+
+    let debug_enabled = {
+        context
+            .channels_with_debug_enabled
+            .lock()
+            .contains(&interaction.channel)
+    };
+
+    if debug_enabled {
+        let result = context
+            .http
+            .create_message(interaction.channel)
+            .content(&debug_lines.join("\n"))
+            .unwrap()
+            .await;
+
+        if let Err(error) = result {
+            error!("debug error: {}", error);
+        }
+    }
 
     if let Some(pool) = &context.pool {
         for change in changes {

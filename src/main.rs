@@ -114,6 +114,7 @@ async fn main() -> Result<()> {
     });
 
     let guilds_with_broken_commands = Arc::new(Mutex::new(HashMap::new()));
+    let channels_with_debug_enabled = Arc::new(Mutex::new(HashSet::new()));
 
     tokio::spawn(setup_global_commands(http.clone(), application_id));
 
@@ -286,6 +287,7 @@ async fn main() -> Result<()> {
             pool: pool.clone(),
             font_name: font_name.clone(),
             guilds_with_broken_commands: guilds_with_broken_commands.clone(),
+            channels_with_debug_enabled: channels_with_debug_enabled.clone(),
         };
 
         tokio::spawn(async move {

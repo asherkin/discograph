@@ -260,6 +260,7 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
     config.add_command("stats", false);
     config.add_command("dump", false);
     config.add_command("bounce", false);
+    config.add_command("debug", false);
 
     let parser = Parser::new(config);
     let command = match parser.parse(&message.content) {
@@ -285,6 +286,33 @@ async fn handle_message(context: &Context, message: &Message) -> Result<bool> {
 
                 Ok(CommandResponse {
                     content: Some("Restarting shard...".into()),
+                    attachments: vec![],
+                    embeds: vec![],
+                })
+            } else {
+                Ok(CommandResponse {
+                    content: None,
+                    attachments: vec![],
+                    embeds: vec![],
+                })
+            }
+        }
+        "debug" => {
+            if context.owners.contains(&command_context.author.id) {
+                let mut channels_with_debug_enabled = context.channels_with_debug_enabled.lock();
+                let was_enabled = channels_with_debug_enabled
+                    .take(&message.channel_id)
+                    .is_some();
+
+                if !was_enabled {
+                    channels_with_debug_enabled.insert(message.channel_id);
+                }
+
+                Ok(CommandResponse {
+                    content: Some(format!(
+                        "Debug output {}",
+                        if was_enabled { "disabled" } else { "enabled" }
+                    )),
                     attachments: vec![],
                     embeds: vec![],
                 })

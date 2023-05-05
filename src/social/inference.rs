@@ -6,6 +6,7 @@ use twilight_model::id::marker::{ChannelMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 
 use std::collections::{HashSet, VecDeque};
+use std::fmt::{Display, Formatter};
 use std::time::Instant;
 
 use crate::cache::{Cache, CachedMessage};
@@ -92,18 +93,19 @@ impl Interaction {
         guild_id: Id<GuildMarker>,
         user_id: Id<UserMarker>,
     ) -> String {
+        // Request the member first as that'll warm the user cache.
+        let member = cache.get_member(guild_id, user_id).await;
+
         let user = match cache.get_user(user_id).await {
             Ok(user) => user,
             Err(_) => return format!("<invalid user {}>", user_id),
         };
 
-        let nickname = match cache.get_member(guild_id, user_id).await {
-            Ok(member) => member.nick,
-            Err(_) => None,
-        }
-        .unwrap_or_else(|| user.name.clone());
+        let nickname = member
+            .map_or(None, |member| member.nick)
+            .unwrap_or_else(|| user.name.clone());
 
-        format!("\"{}\" ({}#{:04})", nickname, user.name, user.discriminator,)
+        format!("\"{}\" ({}#{:04})", nickname, user.name, user.discriminator)
     }
 
     pub async fn to_string(&self, cache: &Cache) -> String {
@@ -113,7 +115,13 @@ impl Interaction {
             .chain(self.other_targets.iter())
             .map(|&user_id| Self::get_user_display_name(cache, self.guild, user_id));
 
-        let target_names = join_all(target_name_futures).await.join(", ");
+        let mut target_names = join_all(target_name_futures).await;
+
+        let primary_target_name = if self.target.is_some() {
+            Some(target_names.remove(0))
+        } else {
+            None
+        };
 
         let channel_name = match cache.get_channel(self.channel).await {
             Ok(channel) => format!("#{}", channel.name),
@@ -127,12 +135,19 @@ impl Interaction {
 
         match self.what {
             InteractionType::Message => format!(
-                "new message from {} in {} @ \"{}\", mentions: [{}]",
-                source_name, channel_name, guild_name, target_names
+                "new message from {} in {} @ \"{}\", target: {}, mentions: [{}]",
+                source_name,
+                channel_name,
+                guild_name,
+                primary_target_name.as_deref().unwrap_or("None"),
+                target_names.join(", "),
             ),
             InteractionType::Reaction => format!(
                 "{} reacted to a message by {} in {} @ \"{}\"",
-                source_name, target_names, channel_name, guild_name
+                source_name,
+                primary_target_name.unwrap(),
+                channel_name,
+                guild_name,
             ),
         }
     }
@@ -173,6 +188,15 @@ pub struct RelationshipChange {
     pub source: Id<UserMarker>,
     pub target: Id<UserMarker>,
     pub reason: RelationshipChangeReason,
+}
+
+impl Display for RelationshipChange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{} --> {} [{:?}]",
+            self.source, self.target, self.reason
+        ))
+    }
 }
 
 const MESSAGE_HISTORY_COUNT: usize = 5;
