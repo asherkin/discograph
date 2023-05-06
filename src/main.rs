@@ -2,6 +2,7 @@ mod cache;
 mod commands;
 mod context;
 mod social;
+mod stats;
 
 use anyhow::{Context as AnyhowContext, Result};
 use futures::StreamExt;
@@ -83,6 +84,10 @@ async fn main() -> Result<()> {
         drop(connection);
 
         info!("database connection established");
+
+        if let Err(error) = stats::reset_guilds(&pool).await {
+            error!(?error, "failed to reset guild stats");
+        }
 
         Some(pool)
     } else {
@@ -290,6 +295,11 @@ async fn main() -> Result<()> {
             channels_with_debug_enabled: channels_with_debug_enabled.clone(),
         };
 
+        // We have to do this outside of the future as otherwise the events might not be ordered.
+        if let Err(error) = stats::handle_event(&context, &event).await {
+            error!(?error, "failed to update guild stats");
+        }
+
         tokio::spawn(async move {
             if let Err(error) = handle_event(&context, &event).await {
                 error!("error handling event {:?}: {:?}", event.kind(), error);
@@ -298,6 +308,12 @@ async fn main() -> Result<()> {
     }
 
     info!("event stream ended, exiting");
+
+    if let Some(pool) = &pool {
+        if let Err(error) = stats::set_offline(pool).await {
+            warn!(?error, "failed to set guilds offline");
+        }
+    }
 
     Ok(())
 }

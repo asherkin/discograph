@@ -35,6 +35,7 @@ use twilight_model::user::User;
 
 use crate::context::Context;
 use crate::social::graph::ColorScheme;
+use crate::stats;
 
 struct CommandContext {
     guild_id: Option<Id<GuildMarker>>,
@@ -505,6 +506,14 @@ async fn command_graph_from_message(
 
     let transparent = matches!(arguments.next(), Some("transparent"));
 
+    if let Some(guild_id) = command.guild_id {
+        if let Err(error) =
+            stats::record_graph_command(context, guild_id, stats::CommandType::Chat).await
+        {
+            warn!(?error, "failed to record graph request");
+        }
+    }
+
     command_graph(context, command, color_scheme, transparent).await
 }
 
@@ -528,6 +537,14 @@ async fn command_graph_from_interaction(
     } else {
         (ColorScheme::Dark, false)
     };
+
+    if let Some(guild_id) = command.guild_id {
+        if let Err(error) =
+            stats::record_graph_command(context, guild_id, stats::CommandType::Slash).await
+        {
+            warn!(?error, "failed to record graph request");
+        }
+    }
 
     command_graph(context, command, color_scheme, transparent).await
 }
