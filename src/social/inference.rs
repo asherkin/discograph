@@ -274,31 +274,36 @@ impl InferenceState {
         }
 
         self.history.push_front(interaction.clone());
-        self.history.truncate(MESSAGE_HISTORY_COUNT);
 
-        // This is... gross.
-        let unique_sources = self
-            .history
-            .iter()
-            .map(|i| i.source)
-            .collect::<HashSet<Id<UserMarker>>>();
+        if self.history.len() >= MESSAGE_HISTORY_COUNT {
+            self.history.truncate(MESSAGE_HISTORY_COUNT);
 
-        // TODO: This is triggering far too often, especially after the bot first starts.
-        //       The original waits for the history list to be full *and* clears it each
-        //       time it triggers. It'd be good to do the same here, but I'm not sure if
-        //       we can without losing the single state storage. That said, if we split
-        //       these up like the original, MessageAdjacency will be a lot simpler.
-        if unique_sources.len() == 2 {
-            let mut unique_sources = unique_sources.iter();
-            let first = unique_sources.next().unwrap();
-            let second = unique_sources.next().unwrap();
-            let target = if source == *first { second } else { first };
+            // This is... gross.
+            let unique_sources = self
+                .history
+                .iter()
+                .map(|i| i.source)
+                .collect::<HashSet<Id<UserMarker>>>();
 
-            changes.push(RelationshipChange {
-                source,
-                target: *target,
-                reason: RelationshipChangeReason::MessageBinarySequence,
-            });
+            // TODO: The original waits for the history list to be full *and* clears it each
+            //       time it triggers. It'd be good to do the same here, but I'm not sure if
+            //       we can without losing the single state storage. That said, if we split
+            //       these up like the original, MessageAdjacency will be a lot simpler.
+            if unique_sources.len() == 2 {
+                let mut unique_sources = unique_sources.iter();
+                let first = unique_sources.next().unwrap();
+                let second = unique_sources.next().unwrap();
+                let target = if source == *first { second } else { first };
+
+                changes.push(RelationshipChange {
+                    source,
+                    target: *target,
+                    reason: RelationshipChangeReason::MessageBinarySequence,
+                });
+
+                // We can't do this while MessageAdjacency is sharing the same list.
+                // self.history.clear();
+            }
         }
     }
 }
