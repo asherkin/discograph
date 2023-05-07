@@ -171,12 +171,12 @@ impl UserRelationshipGraphMap {
 
         // Get the display name for each user ID, ignoring failed lookups or bots.
         let names_and_colors: HashMap<_, _> = {
-            let not_found: HashSet<_> = context
+            let (_, not_found) = context
                 .cache
                 .bulk_preload_members(&context.shard, guild_id, user_ids.iter().cloned())
-                .await?
-                .into_iter()
-                .collect();
+                .await?;
+
+            let not_found: HashSet<_> = not_found.into_iter().collect();
 
             let roles = &roles;
             let not_found = &not_found;

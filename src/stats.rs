@@ -1,7 +1,7 @@
 use anyhow::Result;
-use sqlx::MySqlPool;
+use sqlx::{MySqlPool, Row};
 use twilight_model::gateway::event::Event;
-use twilight_model::gateway::event::Event::{GuildCreate, GuildDelete, Ready};
+use twilight_model::guild::Member;
 use twilight_model::id::marker::GuildMarker;
 use twilight_model::id::Id;
 
@@ -19,16 +19,22 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         .as_millis() as u64;
 
     match event {
-        Ready(ready) => {
-            for guild in &ready.guilds {
-                sqlx::query("INSERT INTO guilds (id, joined) VALUES (?, ?) ON DUPLICATE KEY UPDATE departed = NULL, online = 0")
-                    .bind(guild.id.get())
-                    .bind(timestamp)
-                    .execute(pool)
-                    .await?;
+        Event::Ready(ready) => {
+            for guilds in ready.guilds.chunks(10_000) {
+                let mut values = "(?, ?), ".repeat(guilds.len());
+                values.truncate(values.len() - 2);
+
+                let sql = format!("INSERT INTO guilds (id, joined) VALUES {} ON DUPLICATE KEY UPDATE departed = NULL, online = 0", values);
+
+                let mut query = sqlx::query(&sql);
+                for guild in guilds {
+                    query = query.bind(guild.id.get()).bind(timestamp);
+                }
+
+                query.execute(pool).await?;
             }
         }
-        GuildCreate(guild) => {
+        Event::GuildCreate(guild) => {
             let joined_at = guild
                 .joined_at
                 .map_or(timestamp, |d| (d.as_micros() / 1000) as u64);
@@ -38,8 +44,46 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .bind(joined_at)
                 .execute(pool)
                 .await?;
+
+            // Clear out all the member info, users might have joined or left while we were offline.
+            // If someone had joined, left, then joined again while we were offline, we leave them
+            // marked as departed to avoid making invalid requests to Discord. We'll pick them up
+            // when they next interact.
+            sqlx::query("DELETE FROM members WHERE guild = ? AND departed = 0")
+                .bind(guild.id.get())
+                .execute(pool)
+                .await?;
+
+            // Asynchronously preload the information for members we've seen recent activity from.
+            // TODO: It's quite likely we want to just let the web UI drive this via API, as it'll need bulk loading anyway.
+            let cache = context.cache.clone();
+            let shard = context.shard.clone();
+            let pool = pool.clone();
+            let guild_id = guild.id;
+
+            tokio::spawn(async move {
+                let members = sqlx::query("(SELECT source AS user FROM events WHERE guild = ? ORDER BY timestamp DESC LIMIT 5000) UNION DISTINCT (SELECT target AS user FROM events WHERE guild = ? ORDER BY timestamp DESC LIMIT 5000)")
+                    .bind(guild_id.get())
+                    .bind(guild_id.get())
+                    .try_map(|row| {
+                        Id::new_checked(row.get(0))
+                            .ok_or(sqlx::Error::ColumnDecode {
+                                index: "0".into(),
+                                source: "invalid id".into(),
+                            })
+                    })
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+
+                // The Event::MemberChunk handler below does the actual work.
+                cache
+                    .bulk_request_members(&shard, guild_id, &members)
+                    .await
+                    .unwrap();
+            });
         }
-        GuildDelete(guild) => {
+        Event::GuildDelete(guild) => {
             if guild.unavailable {
                 sqlx::query("UPDATE guilds SET online = 0 WHERE id = ?")
                     .bind(guild.id.get())
@@ -53,7 +97,151 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                     .await?;
             }
         }
+        Event::MemberAdd(member) => {
+            // We only update their information if we already have them in the DB, to avoid it
+            // growing with data that isn't of any interest.
+
+            let result = sqlx::query("UPDATE users SET name = ?, discriminator = ?, bot = ?, avatar = ?, animated = ? WHERE id = ?")
+                .bind(&member.user.name)
+                .bind(member.user.discriminator)
+                .bind(member.user.bot)
+                .bind(member.user.avatar.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(member.user.avatar.map_or(false, |image| image.is_animated()))
+                .bind(member.user.id.get())
+                .execute(pool)
+                .await?;
+
+            if result.rows_affected() > 0 {
+                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = ?, avatar = ?, animated = ?, departed = 0")
+                    .bind(member.guild_id.get())
+                    .bind(member.user.id.get())
+                    .bind(&member.nick)
+                    .bind(member.avatar.map(|image| image.bytes().as_slice().to_owned()))
+                    .bind(member.avatar.map_or(false, |image| image.is_animated()))
+                    .execute(pool)
+                    .await?;
+            }
+        }
+        Event::MemberUpdate(member) => {
+            // We only update their information if we already have them in the DB, to avoid it
+            // growing with data that isn't of any interest.
+
+            let result = sqlx::query("UPDATE users SET name = ?, discriminator = ?, bot = ?, avatar = ?, animated = ? WHERE id = ?")
+                .bind(&member.user.name)
+                .bind(member.user.discriminator)
+                .bind(member.user.bot)
+                .bind(member.user.avatar.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(member.user.avatar.map_or(false, |image| image.is_animated()))
+                .bind(member.user.id.get())
+                .execute(pool)
+                .await?;
+
+            if result.rows_affected() > 0 {
+                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = ?, avatar = ?, animated = ?, departed = 0")
+                    .bind(member.guild_id.get())
+                    .bind(member.user.id.get())
+                    .bind(&member.nick)
+                    .bind(member.avatar.map(|image| image.bytes().as_slice().to_owned()))
+                    .bind(member.avatar.map_or(false, |image| image.is_animated()))
+                    .execute(pool)
+                    .await?;
+            }
+        }
+        Event::MemberRemove(member) => {
+            sqlx::query("UPDATE users SET name = ?, discriminator = ?, bot = ?, avatar = ?, animated = ? WHERE id = ?")
+                .bind(&member.user.name)
+                .bind(member.user.discriminator)
+                .bind(member.user.bot)
+                .bind(member.user.avatar.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(member.user.avatar.map_or(false, |image| image.is_animated()))
+                .bind(member.user.id.get())
+                .execute(pool)
+                .await?;
+
+            sqlx::query("UPDATE members SET nickname = NULL, avatar = NULL, animated = 0, departed = 1 WHERE guild = ? AND user = ?")
+                .bind(member.guild_id.get())
+                .bind(member.user.id.get())
+                .execute(pool)
+                .await?;
+        }
+        Event::MemberChunk(chunk) => {
+            let pool = pool.clone();
+            let guild_id = chunk.guild_id;
+            let members = chunk.members.clone();
+            let not_found = chunk.not_found.clone();
+
+            tokio::spawn(async move {
+                store_members(&pool, guild_id, &members).await.unwrap();
+
+                if !not_found.is_empty() {
+                    let mut values = "(?, ?, 1), ".repeat(not_found.len());
+                    values.truncate(values.len() - 2);
+
+                    let sql = format!("INSERT INTO members (guild, user, departed) VALUES {} ON DUPLICATE KEY UPDATE nickname = NULL, avatar = NULL, animated = 0, departed = 1", values);
+
+                    let mut query = sqlx::query(&sql);
+                    for user_id in not_found {
+                        query = query.bind(guild_id.get()).bind(user_id.get());
+                    }
+
+                    query.execute(&pool).await.unwrap();
+                }
+            });
+        }
         _ => (),
+    }
+
+    Ok(())
+}
+
+async fn store_members(
+    pool: &MySqlPool,
+    guild_id: Id<GuildMarker>,
+    members: &[Member],
+) -> Result<()> {
+    if members.is_empty() {
+        return Ok(());
+    }
+
+    {
+        let mut values = "(?, ?, ?, ?, ?, ?), ".repeat(members.len());
+        values.truncate(values.len() - 2);
+
+        let sql = format!("INSERT INTO users (id, name, discriminator, bot, avatar, animated) VALUES {} ON DUPLICATE KEY UPDATE name = VALUE(name), discriminator = VALUE(discriminator), bot = VALUE(bot), avatar = VALUE(avatar), animated = VALUE(animated)", values);
+
+        let mut query = sqlx::query(&sql);
+        for member in members {
+            let avatar = &member.user.avatar;
+            query = query
+                .bind(member.user.id.get())
+                .bind(&member.user.name)
+                .bind(member.user.discriminator)
+                .bind(member.user.bot)
+                .bind(avatar.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(avatar.map_or(false, |image| image.is_animated()));
+        }
+
+        query.execute(pool).await?;
+    }
+
+    {
+        let mut values = "(?, ?, ?, ?, ?), ".repeat(members.len());
+        values.truncate(values.len() - 2);
+
+        let sql = format!("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES {} ON DUPLICATE KEY UPDATE nickname = VALUE(nickname), avatar = VALUE(avatar), animated = VALUE(animated)", values);
+
+        let mut query = sqlx::query(&sql);
+        for member in members {
+            let avatar = &member.avatar;
+            query = query
+                .bind(guild_id.get())
+                .bind(member.user.id.get())
+                .bind(&member.nick)
+                .bind(avatar.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(avatar.map_or(false, |image| image.is_animated()));
+        }
+
+        query.execute(pool).await?;
     }
 
     Ok(())

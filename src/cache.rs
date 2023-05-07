@@ -116,6 +116,7 @@ impl From<&Role> for CachedRole {
 #[derive(Debug, Clone)]
 pub struct CachedMember {
     pub nick: Option<String>,
+    pub avatar: Option<ImageHash>,
     pub roles: Vec<Id<RoleMarker>>,
 }
 
@@ -123,6 +124,7 @@ impl From<&PartialMember> for CachedMember {
     fn from(member: &PartialMember) -> Self {
         CachedMember {
             nick: member.nick.clone(),
+            avatar: member.avatar,
             roles: member.roles.clone(),
         }
     }
@@ -132,6 +134,7 @@ impl From<&Member> for CachedMember {
     fn from(member: &Member) -> Self {
         CachedMember {
             nick: member.nick.clone(),
+            avatar: member.avatar,
             roles: member.roles.clone(),
         }
     }
@@ -141,6 +144,7 @@ impl From<&MemberUpdate> for CachedMember {
     fn from(member: &MemberUpdate) -> Self {
         CachedMember {
             nick: member.nick.clone(),
+            avatar: member.avatar,
             roles: member.roles.clone(),
         }
     }
@@ -294,8 +298,8 @@ impl Cache {
                             warn!("failed to notify member chunk with nonce {}", nonce);
                         }
                     } else {
-                        warn!(
-                            "got member chunk with nonce {}, but there was no pending request",
+                        debug!(
+                            "cache got member chunk with nonce {}, but there was no pending request",
                             nonce
                         );
                     }
@@ -349,27 +353,41 @@ impl Cache {
         debug!("cache stats: {:?}", self.get_stats());
     }
 
-    /// Bulk request member info for a guild via the gateway.
+    /// This is like bulk_request_members, but only loads members not in the cache.
     ///
-    /// Returns the IDs of members that could not be loaded by Discord.
+    /// Returns a tuple of users that were already loaded, and users that could not be loaded.
     pub async fn bulk_preload_members(
         &self,
         shard: &MessageSender,
         guild_id: Id<GuildMarker>,
         user_ids: impl Iterator<Item = Id<UserMarker>>,
-    ) -> Result<Vec<Id<UserMarker>>> {
-        let users_to_load: Vec<_> = {
+    ) -> Result<(Vec<Id<UserMarker>>, Vec<Id<UserMarker>>)> {
+        let (already_loaded, users_to_load): (Vec<_>, Vec<_>) = {
             let members = self.members.lock();
-            user_ids
-                .filter(|user_id| !members.contains(&(guild_id, *user_id)))
-                .collect()
+            user_ids.partition(|user_id| members.contains(&(guild_id, *user_id)))
         };
 
         if users_to_load.is_empty() {
-            return Ok(Vec::new());
+            return Ok((already_loaded, Vec::new()));
         }
 
-        let (nonces, commands): (Vec<_>, Vec<_>) = users_to_load
+        Ok((
+            already_loaded,
+            self.bulk_request_members(shard, guild_id, &users_to_load)
+                .await?,
+        ))
+    }
+
+    /// Bulk request member info for a guild via the gateway.
+    ///
+    /// Returns the IDs of members that could not be loaded by Discord.
+    pub async fn bulk_request_members(
+        &self,
+        shard: &MessageSender,
+        guild_id: Id<GuildMarker>,
+        user_ids: &[Id<UserMarker>],
+    ) -> Result<Vec<Id<UserMarker>>> {
+        let (nonces, commands): (Vec<_>, Vec<_>) = user_ids
             .chunks(100)
             .map(|chunk| {
                 use rand::distributions::Alphanumeric;
@@ -392,7 +410,7 @@ impl Cache {
 
         info!(
             "requesting {} members for guild {} in {} chunks",
-            users_to_load.len(),
+            user_ids.len(),
             guild_id,
             nonces.len(),
         );
@@ -428,11 +446,8 @@ impl Cache {
 
         let results = match future.await {
             Ok(results) => results,
-            Err(elapsed) => {
-                warn!(
-                    "member chunk request for guild {} timed out after {}",
-                    guild_id, elapsed
-                );
+            Err(_) => {
+                warn!("member chunk request for guild {} timed out", guild_id);
 
                 let mut pending_guild_members = self.pending_guild_members.lock();
 
