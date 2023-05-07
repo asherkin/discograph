@@ -112,7 +112,7 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .await?;
 
             if result.rows_affected() > 0 {
-                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = ?, avatar = ?, animated = ?, departed = 0")
+                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = VALUE(nickname), avatar = VALUE(avatar), animated = VALUE(animated), departed = 0")
                     .bind(member.guild_id.get())
                     .bind(member.user.id.get())
                     .bind(&member.nick)
@@ -137,7 +137,7 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .await?;
 
             if result.rows_affected() > 0 {
-                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = ?, avatar = ?, animated = ?, departed = 0")
+                sqlx::query("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE nickname = VALUE(nickname), avatar = VALUE(avatar), animated = VALUE(animated), departed = 0")
                     .bind(member.guild_id.get())
                     .bind(member.user.id.get())
                     .bind(&member.nick)
