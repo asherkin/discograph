@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
 
         info!("database connection established");
 
+        // Only do this if we're not resuming a gateway connection.
         if let Err(error) = stats::reset_guilds(&pool).await {
             error!(?error, "failed to reset guild stats");
         }

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use futures::future::join_all;
 use lru::LruCache;
 use parking_lot::Mutex;
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use twilight_gateway::MessageSender;
@@ -192,7 +192,7 @@ impl From<&Message> for CachedMessage {
 #[allow(clippy::type_complexity)]
 pub struct Cache {
     http: Arc<Client>,
-    pending_guild_members: Mutex<HashMap<String, oneshot::Sender<Vec<Id<UserMarker>>>>>,
+    pending_guild_members: Mutex<HashMap<String, mpsc::Sender<Vec<Id<UserMarker>>>>>,
     users: Mutex<LruCache<Id<UserMarker>, CachedUser>>,
     guilds: Mutex<LruCache<Id<GuildMarker>, CachedGuild>>,
     roles: Mutex<LruCache<Id<RoleMarker>, CachedRole>>,
@@ -293,16 +293,31 @@ impl Cache {
                 }
 
                 if let Some(nonce) = &chunk.nonce {
-                    if let Some(sender) = self.pending_guild_members.lock().remove(nonce) {
-                        if sender.send(chunk.not_found.clone()).is_err() {
-                            warn!("failed to notify member chunk with nonce {}", nonce);
-                        }
-                    } else {
+                    let mut pending_guild_members = self.pending_guild_members.lock();
+
+                    let nonce = nonce.clone();
+                    let not_found = chunk.not_found.clone();
+
+                    let to_complete = pending_guild_members.remove(&nonce);
+                    if to_complete.is_none() {
                         debug!(
                             "cache got member chunk with nonce {}, but there was no pending request",
                             nonce
                         );
                     }
+
+                    // Ping an empty list to everyone else waiting to let them know we're processing.
+                    let to_notify: Vec<_> = pending_guild_members.values().cloned().collect();
+
+                    tokio::spawn(async move {
+                        if let Some(to_complete) = to_complete {
+                            if to_complete.send(not_found).await.is_err() {
+                                warn!("failed to notify member chunk with nonce {}", nonce);
+                            }
+                        }
+
+                        join_all(to_notify.iter().map(|sender| sender.send(Vec::new()))).await;
+                    });
                 }
             }
             Event::MemberRemove(member) => {
@@ -387,7 +402,7 @@ impl Cache {
         guild_id: Id<GuildMarker>,
         user_ids: &[Id<UserMarker>],
     ) -> Result<Vec<Id<UserMarker>>> {
-        let (nonces, commands): (Vec<_>, Vec<_>) = user_ids
+        let requests: Vec<_> = user_ids
             .chunks(100)
             .map(|chunk| {
                 use rand::distributions::Alphanumeric;
@@ -406,60 +421,67 @@ impl Cache {
 
                 (nonce, command)
             })
-            .unzip();
+            .collect();
 
         info!(
             "requesting {} members for guild {} in {} chunks",
             user_ids.len(),
             guild_id,
-            nonces.len(),
+            requests.len(),
         );
 
-        let futures: Vec<_> = {
+        let mut rx = {
             let mut pending_guild_members = self.pending_guild_members.lock();
 
-            nonces
-                .iter()
-                .zip(commands.into_iter())
-                .map(|(nonce, command)| {
-                    let (sender, receiver) = oneshot::channel();
-                    if pending_guild_members
-                        .insert(nonce.clone(), sender)
-                        .is_some()
-                    {
-                        panic!("guild member chunk request nonce collision occurred");
-                    }
+            let (tx, rx) = mpsc::channel(10);
 
-                    if let Err(error) = shard.command(&command) {
-                        warn!(?command, ?error, "failed to request member chunk");
-                    }
-
-                    receiver
-                })
-                .collect()
-        };
-
-        let future = timeout(
-            Duration::from_secs(5 * (nonces.len() as u64)),
-            join_all(futures),
-        );
-
-        let results = match future.await {
-            Ok(results) => results,
-            Err(_) => {
-                warn!("member chunk request for guild {} timed out", guild_id);
-
-                let mut pending_guild_members = self.pending_guild_members.lock();
-
-                for nonce in nonces {
-                    pending_guild_members.remove(&nonce);
+            for (nonce, command) in &requests {
+                if pending_guild_members
+                    .insert(nonce.clone(), tx.clone())
+                    .is_some()
+                {
+                    panic!("guild member chunk request nonce collision occurred");
                 }
 
-                return Ok(Vec::new());
+                if let Err(error) = shard.command(command) {
+                    warn!(?command, ?error, "failed to request member chunk");
+
+                    pending_guild_members.remove(nonce);
+                }
             }
+
+            drop(tx);
+
+            rx
         };
 
-        let not_found: Vec<_> = results.into_iter().flatten().flatten().collect();
+        let mut not_found = Vec::new();
+
+        loop {
+            match timeout(Duration::from_secs(5), rx.recv()).await {
+                Ok(None) => {
+                    // Every chunk we requested has been received.
+                    break;
+                }
+                Ok(Some(results)) => {
+                    // Empty results are used to reset our timeout.
+                    if !results.is_empty() {
+                        not_found.extend(results.into_iter());
+                    }
+                }
+                Err(_) => {
+                    warn!("member chunk request for guild {} timed out", guild_id);
+
+                    let mut pending_guild_members = self.pending_guild_members.lock();
+
+                    for (nonce, _) in &requests {
+                        pending_guild_members.remove(nonce);
+                    }
+
+                    break;
+                }
+            }
+        }
 
         Ok(not_found)
     }
