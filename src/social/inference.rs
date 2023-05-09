@@ -1,6 +1,6 @@
 use anyhow::{Context as AnyhowContext, Result};
 use futures::future::join_all;
-use twilight_model::channel::Message;
+use twilight_model::channel::{ChannelType, Message};
 use twilight_model::gateway::payload::incoming::ReactionAdd;
 use twilight_model::id::marker::{ChannelMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
@@ -123,8 +123,9 @@ impl Interaction {
             None
         };
 
-        let channel_name = match cache.get_channel(self.channel).await {
-            Ok(channel) => format!("#{}", channel.name),
+        let channel_name = match cache.get_channel(self.guild, self.channel).await {
+            Ok(channel) if channel.kind == ChannelType::GuildText => format!("#{}", channel.name),
+            Ok(channel) => channel.name,
             Err(_) => format!("<invalid channel {}>", self.channel),
         };
 

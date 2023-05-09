@@ -45,10 +45,16 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         {
             let referenced_message = match message.reference {
                 Some(MessageReference {
+                    guild_id,
                     channel_id: Some(channel_id),
                     message_id: Some(message_id),
                     ..
-                }) => Some(context.cache.get_message(channel_id, message_id).await?),
+                }) => Some(
+                    context
+                        .cache
+                        .get_message(guild_id, channel_id, message_id)
+                        .await?,
+                ),
                 _ => None,
             };
 
@@ -58,7 +64,7 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         Event::ReactionAdd(reaction) if reaction.user_id != context.user.id => {
             let message = context
                 .cache
-                .get_message(reaction.channel_id, reaction.message_id)
+                .get_message(reaction.guild_id, reaction.channel_id, reaction.message_id)
                 .await?;
 
             let interaction = Interaction::new_from_reaction(reaction, &message)?;
