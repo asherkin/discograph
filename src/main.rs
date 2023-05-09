@@ -9,7 +9,6 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::Connection;
-use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 use twilight_gateway::stream::ShardEventStream;
 use twilight_gateway::{stream, Config, Event};
@@ -18,9 +17,9 @@ use twilight_model::application::command::{
     Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
     CommandType,
 };
-use twilight_model::gateway::payload::outgoing::UpdatePresence;
+use twilight_model::gateway::payload::outgoing::update_presence::UpdatePresencePayload;
 use twilight_model::gateway::presence::{Activity, ActivityType, MinimalActivity, Status};
-use twilight_model::gateway::{CloseFrame, Intents, ShardId};
+use twilight_model::gateway::{CloseFrame, Intents};
 use twilight_model::id::marker::{ApplicationMarker, GuildMarker, UserMarker};
 use twilight_model::id::Id;
 use twilight_model::oauth::team::TeamMembershipState;
@@ -41,22 +40,6 @@ fn get_optional_env(key: &str) -> Option<String> {
         Ok(value) => Some(value),
         Err(env::VarError::NotPresent) => None,
         Err(error) => panic!("{}", error),
-    }
-}
-
-struct LastPresenceUpdate {
-    guild_counts: HashMap<ShardId, usize>,
-    when: Instant,
-    count: usize,
-}
-
-impl LastPresenceUpdate {
-    fn new() -> Self {
-        Self {
-            guild_counts: HashMap::new(),
-            when: Instant::now(),
-            count: 0,
-        }
     }
 }
 
@@ -134,7 +117,19 @@ async fn main() -> Result<()> {
         intents |= Intents::MESSAGE_CONTENT;
     }
 
-    let config = Config::new(token, intents);
+    let presence = UpdatePresencePayload::new(
+        vec![Activity::from(MinimalActivity {
+            kind: ActivityType::Watching,
+            name: "for /graph".into(),
+            url: None,
+        })],
+        false,
+        0,
+        Status::Online,
+    )
+    .expect("malformed presence payload");
+
+    let config = Config::builder(token, intents).presence(presence).build();
 
     let mut shards: Vec<_> = stream::create_recommended(&http, config, |_, config| config.build())
         .await?
@@ -162,17 +157,11 @@ async fn main() -> Result<()> {
         }
     })?;
 
-    let last_presence_update = Arc::new(Mutex::new(LastPresenceUpdate::new()));
-
     if let (Some(token), Some(bot_id)) = (
         get_optional_env("DISCOGRAPH_TOPGG_TOKEN"),
         get_optional_env("DISCOGRAPH_TOPGG_BOT_ID"),
     ) {
-        tokio::spawn(start_posting_stats(
-            token,
-            bot_id,
-            last_presence_update.clone(),
-        ));
+        tokio::spawn(start_posting_stats(token, bot_id, cache.clone()));
     } else {
         debug!("top.gg stats posting not configured");
     }
@@ -215,73 +204,6 @@ async fn main() -> Result<()> {
             }
         }
 
-        let needs_presence_update = matches!(&event, Event::Ready(_) | Event::Resumed);
-        let wants_presence_update = matches!(&event, Event::GuildCreate(_) | Event::GuildDelete(_));
-
-        if needs_presence_update || wants_presence_update {
-            {
-                let mut last_presence_update = last_presence_update.lock();
-                let guild_counts = &mut last_presence_update.guild_counts;
-
-                match &event {
-                    Event::Ready(_) => {
-                        guild_counts.insert(shard.id(), 0);
-                    }
-                    Event::GuildCreate(_) => {
-                        let value = guild_counts.entry(shard.id()).or_insert(0);
-                        *value = value.saturating_add(1);
-                    }
-                    Event::GuildDelete(_) => {
-                        let value = guild_counts.entry(shard.id()).or_insert(0);
-                        *value = value.saturating_sub(1);
-                    }
-                    _ => {}
-                }
-            }
-
-            let shard_senders = shard_senders.clone();
-            let last_presence_update = last_presence_update.clone();
-
-            tokio::spawn(async move {
-                if !needs_presence_update {
-                    let last = last_presence_update.lock().when;
-                    tokio::time::sleep_until(last + Duration::from_secs(2)).await;
-                }
-
-                let mut last_presence_update = last_presence_update.lock();
-
-                let count = last_presence_update.guild_counts.values().sum();
-                if !needs_presence_update && count == last_presence_update.count {
-                    return;
-                }
-
-                let activity: Activity = MinimalActivity {
-                    kind: ActivityType::Watching,
-                    name: format!(
-                        "{} {}",
-                        format_guild_count(count),
-                        if count == 1 { "server" } else { "servers" }
-                    ),
-                    url: None,
-                }
-                .into();
-
-                debug!("sending presence update with {} guilds", count);
-
-                let message = UpdatePresence::new(vec![activity], false, 0, Status::Online)
-                    .expect("malformed presence payload");
-
-                for shard in &shard_senders {
-                    if let Err(error) = shard.command(&message) {
-                        warn!(?error, ?message, "failed to update presence");
-                    }
-                }
-
-                last_presence_update.when = Instant::now();
-                last_presence_update.count = count;
-            });
-        }
-
         let context = Context {
             shard: shard.sender(),
             application_id,
@@ -320,11 +242,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn start_posting_stats(
-    token: String,
-    bot_id: String,
-    last_presence_update: Arc<Mutex<LastPresenceUpdate>>,
-) {
+async fn start_posting_stats(token: String, bot_id: String, cache: Arc<Cache>) {
     use dbl::types::ShardStats;
 
     let client = dbl::Client::new(token).expect("failed to create top.gg api client");
@@ -337,23 +255,16 @@ async fn start_posting_stats(
     tokio::time::sleep(Duration::from_secs(5 * 60)).await;
 
     loop {
-        let (shard_count, server_count): (usize, usize) = {
-            let last_presence_update = last_presence_update.lock();
+        let server_count = cache.get_guild_count();
 
-            (
-                last_presence_update.guild_counts.len(),
-                last_presence_update.guild_counts.values().sum(),
-            )
-        };
-
-        info!(?shard_count, ?server_count, "posting stats to top.gg");
+        info!(?server_count, "posting stats to top.gg");
 
         let result = client
             .update_stats(
                 bot_id,
                 ShardStats::Cumulative {
                     server_count: server_count as u64,
-                    shard_count: Some(shard_count as u64),
+                    shard_count: None,
                 },
             )
             .await;
@@ -472,41 +383,4 @@ async fn handle_event(context: &Context, event: &Event) -> Result<()> {
     social::handle_event(context, event).await?;
 
     Ok(())
-}
-
-fn format_guild_count(count: usize) -> String {
-    if count > 100_000 {
-        format!("{:.0}k", (count as f64) / 1000.0)
-    } else if count > 10_000 {
-        format!("{:.1}k", (count as f64) / 1000.0)
-    } else if count > 1_000 {
-        format!("{},{:0.3}", count / 1000, count - ((count / 1000) * 1000))
-    } else {
-        format!("{}", count)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_guild_count;
-
-    #[test]
-    fn test_format_guild_count_small() {
-        assert_eq!(format_guild_count(5), "5");
-    }
-
-    #[test]
-    fn test_format_guild_count_large() {
-        assert_eq!(format_guild_count(1450), "1,450");
-    }
-
-    #[test]
-    fn test_format_guild_count_huge() {
-        assert_eq!(format_guild_count(12345), "12.3k");
-    }
-
-    #[test]
-    fn test_format_guild_count_gigantic() {
-        assert_eq!(format_guild_count(123456), "123k");
-    }
 }
