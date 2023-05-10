@@ -12,7 +12,6 @@ use twilight_model::channel::{Channel, ChannelType, Message};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::payload::incoming::{MemberUpdate, MessageUpdate};
 use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
-use twilight_model::gateway::ShardId;
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
 use twilight_model::id::marker::{
     ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
@@ -267,10 +266,14 @@ impl Cache {
         self.guilds.lock().len()
     }
 
-    pub fn update(&self, shard: ShardId, event: &Event) {
+    pub fn update(&self, event: &Event) {
         match event {
-            Event::GatewayClose(_) => {
+            Event::Ready(ready) => {
+                let shard = ready.shard.expect("expected a shard id in ready event");
+
                 // Remove all the guilds in our cache that belonged to this shard ID.
+                // This assumes the shard count wont change while running, but that's currently true.
+                // We can't do this on disconnect as if we get a resume we still need the data.
                 self.guilds.lock().retain(|guild_id, _| {
                     ((guild_id.get() >> 22) % shard.total()) != shard.number()
                 });
@@ -485,9 +488,12 @@ impl Cache {
         let mut not_found = Vec::new();
 
         loop {
+            debug!("polling member responses for guild {}", guild_id);
+
             match timeout(Duration::from_secs(5), rx.recv()).await {
                 Ok(None) => {
-                    // Every chunk we requested has been received.
+                    info!("all members received for guild {}", guild_id);
+
                     break;
                 }
                 Ok(Some(results)) => {

@@ -191,11 +191,6 @@ async fn main() -> Result<()> {
 
         debug!(?event, shard = ?shard.id(), "received event");
 
-        // Update the cache with the event.
-        // Done before we spawn the tasks to ensure the cache is updated.
-        // The cache also wants to handle GatewayClose events.
-        cache.update(shard.id(), &event);
-
         if let Event::GatewayClose(_) = event {
             if shutdown.load(Ordering::Relaxed) {
                 // Forget the shard to avoid returning it back to the stream.
@@ -203,6 +198,10 @@ async fn main() -> Result<()> {
                 continue;
             }
         }
+
+        // Update the cache with the event.
+        // Done before we spawn the tasks to ensure the cache is updated.
+        cache.update(&event);
 
         let context = Context {
             shard: shard.sender(),
