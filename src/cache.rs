@@ -291,6 +291,14 @@ impl Cache {
                     warn!(?channel, "cache got a non-guild channel deletion");
                 }
             }
+            Event::ThreadCreate(thread) => self.put_channel(thread),
+            Event::ThreadUpdate(thread) => self.put_channel(thread),
+            Event::ThreadDelete(thread) => {
+                self.guilds
+                    .lock()
+                    .get_mut(&thread.guild_id)
+                    .and_then(|guild| guild.channels.lock().remove(&thread.id));
+            }
             Event::GuildCreate(guild) => self.put_full_guild(guild),
             Event::GuildUpdate(guild) => self.put_guild(guild),
             Event::GuildDelete(guild) => {
@@ -803,6 +811,10 @@ impl Cache {
                 info!("channel {} not in cache, fetching", channel_id);
 
                 let channel = self.http.channel(channel_id).await?.model().await?;
+
+                if channel.guild_id != Some(guild_id) {
+                    warn!(?channel, ?guild_id, "fetched channel guild id does not match expected guild");
+                }
 
                 self.put_channel(&channel);
 
