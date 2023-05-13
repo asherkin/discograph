@@ -14,7 +14,7 @@ use twilight_model::gateway::payload::incoming::{MemberUpdate, MessageUpdate};
 use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
 use twilight_model::id::marker::{
-    ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker, WebhookMarker,
+    ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
 };
 use twilight_model::id::Id;
 use twilight_model::user::User;
@@ -172,7 +172,6 @@ impl From<&Channel> for CachedChannel {
 #[derive(Debug, Clone)]
 pub struct CachedMessage {
     pub author_id: Id<UserMarker>,
-    pub webhook_id: Option<Id<WebhookMarker>>,
     pub kind: MessageType,
 }
 
@@ -180,7 +179,6 @@ impl From<&Message> for CachedMessage {
     fn from(message: &Message) -> Self {
         CachedMessage {
             author_id: message.author.id,
-            webhook_id: message.webhook_id,
             kind: message.kind,
         }
     }
@@ -500,7 +498,7 @@ impl Cache {
         loop {
             debug!("polling member responses for guild {}", guild_id);
 
-            match timeout(Duration::from_secs(5), rx.recv()).await {
+            match timeout(Duration::from_secs(30), rx.recv()).await {
                 Ok(None) => {
                     info!("all members received for guild {}", guild_id);
 

@@ -1,14 +1,17 @@
 pub mod graph;
 pub mod inference;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use std::collections::HashSet;
 use tracing::{error, info};
 use twilight_model::channel::message::{MessageReference, MessageType};
 use twilight_model::channel::ChannelType;
 use twilight_model::gateway::event::Event;
+use twilight_model::id::marker::UserMarker;
+use twilight_model::id::Id;
 
+use crate::cache::CachedMember;
 use crate::context::Context;
 use crate::social::inference::{Interaction, RelationshipChange};
 
@@ -40,7 +43,6 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
         }
         Event::MessageCreate(message)
             if (message.kind == MessageType::Regular || message.kind == MessageType::Reply)
-                && message.webhook_id.is_none()
                 && message.author.id != context.user.id =>
         {
             let referenced_message = match message.reference {
@@ -67,11 +69,8 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .get_message(reaction.guild_id, reaction.channel_id, reaction.message_id)
                 .await?;
 
-            // Ignore reactions to messages from webhooks, as they have bogus author info.
-            if message.webhook_id.is_none() {
-                let interaction = Interaction::new_from_reaction(reaction, &message)?;
-                process_interaction(context, interaction).await;
-            }
+            let interaction = Interaction::new_from_reaction(reaction, &message)?;
+            process_interaction(context, interaction).await;
         }
         _ => (),
     }
@@ -171,7 +170,7 @@ pub async fn store_interaction(
     }
 
     // Ensure the DB contains the details of who was involved in this interaction.
-    let (already_loaded, _) = context
+    let (already_loaded, not_found) = context
         .cache
         .bulk_preload_members(&context.shard, interaction.guild, user_ids.iter().cloned())
         .await
@@ -188,7 +187,26 @@ pub async fn store_interaction(
         }
     });
 
-    let (users, members): (Vec<_>, Vec<_>) = join_all(already_loaded).await.into_iter().unzip();
+    // Not found users are no longer members (or are webhooks), but we still need their user info.
+    // For webhooks this'll pull their latest profile info from the cache, which is the best we can do.
+    // Like before, the gateway event handler will have added their departed member records.
+    let not_found = not_found.into_iter().map(|user_id| {
+        let cache = context.cache.clone();
+
+        async move {
+            let user = cache.get_user(user_id).await;
+            (
+                user,
+                Result::<(Id<UserMarker>, CachedMember), _>::Err(anyhow!("departed member")),
+            )
+        }
+    });
+
+    let (users, members): (Vec<_>, Vec<_>) = join_all(already_loaded)
+        .await
+        .into_iter()
+        .chain(join_all(not_found).await.into_iter())
+        .unzip();
 
     let users: Vec<_> = users.into_iter().flatten().collect();
     if !users.is_empty() {
