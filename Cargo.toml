@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 
 [dependencies]
-ctrlc = "3"
 dbl-rs = "0.3"
 futures = "0.3"
 lru = "0.10"
@@ -21,6 +20,7 @@ twilight-http = "0.15"
 twilight-model = "0.15"
 unicode-segmentation = "1"
 anyhow = { version = "1", features = ["backtrace"] }
+ctrlc = { version = "3", features = ["termination"] }
 sqlx = { version = "0.6", default-features = false, features = ["runtime-tokio-rustls", "mysql"] }
 tokio = { version = "1", features = ["macros", "rt", "process"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
