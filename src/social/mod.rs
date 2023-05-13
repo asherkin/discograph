@@ -67,8 +67,11 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .get_message(reaction.guild_id, reaction.channel_id, reaction.message_id)
                 .await?;
 
-            let interaction = Interaction::new_from_reaction(reaction, &message)?;
-            process_interaction(context, interaction).await;
+            // Ignore reactions to messages from webhooks, as they have bogus author info.
+            if message.webhook_id.is_none() {
+                let interaction = Interaction::new_from_reaction(reaction, &message)?;
+                process_interaction(context, interaction).await;
+            }
         }
         _ => (),
     }

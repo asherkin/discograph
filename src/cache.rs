@@ -14,7 +14,7 @@ use twilight_model::gateway::payload::incoming::{MemberUpdate, MessageUpdate};
 use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
 use twilight_model::guild::{Guild, Member, PartialGuild, PartialMember, Permissions, Role};
 use twilight_model::id::marker::{
-    ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
+    ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker, WebhookMarker,
 };
 use twilight_model::id::Id;
 use twilight_model::user::User;
@@ -172,6 +172,7 @@ impl From<&Channel> for CachedChannel {
 #[derive(Debug, Clone)]
 pub struct CachedMessage {
     pub author_id: Id<UserMarker>,
+    pub webhook_id: Option<Id<WebhookMarker>>,
     pub kind: MessageType,
 }
 
@@ -179,6 +180,7 @@ impl From<&Message> for CachedMessage {
     fn from(message: &Message) -> Self {
         CachedMessage {
             author_id: message.author.id,
+            webhook_id: message.webhook_id,
             kind: message.kind,
         }
     }
@@ -813,7 +815,11 @@ impl Cache {
                 let channel = self.http.channel(channel_id).await?.model().await?;
 
                 if channel.guild_id != Some(guild_id) {
-                    warn!(?channel, ?guild_id, "fetched channel guild id does not match expected guild");
+                    warn!(
+                        ?channel,
+                        ?guild_id,
+                        "fetched channel guild id does not match expected guild"
+                    );
                 }
 
                 self.put_channel(&channel);
@@ -857,19 +863,20 @@ impl Cache {
             }
         }
 
-        if let (Some(guild_id), Some(author), Some(kind)) =
-            (message.guild_id, &message.author, message.kind)
-        {
-            self.guilds.lock().get_mut(&guild_id).and_then(|guild| {
-                guild.messages.lock().put(
-                    message.id,
-                    CachedMessage {
-                        author_id: author.id,
-                        kind,
-                    },
-                )
-            });
-        }
+        // The things we store can't change, so there is no need for this.
+        // if let (Some(guild_id), Some(author), Some(kind)) =
+        //     (message.guild_id, &message.author, message.kind)
+        // {
+        //     self.guilds.lock().get_mut(&guild_id).and_then(|guild| {
+        //         guild.messages.lock().put(
+        //             message.id,
+        //             CachedMessage {
+        //                 author_id: author.id,
+        //                 kind,
+        //             },
+        //         )
+        //     });
+        // }
     }
 
     pub async fn get_message(
