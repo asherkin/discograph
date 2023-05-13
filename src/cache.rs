@@ -905,12 +905,15 @@ impl Cache {
             None => {
                 info!("message {} not in cache, fetching", message_id);
 
-                let message = self
+                let mut message = self
                     .http
                     .message(channel_id, message_id)
                     .await?
                     .model()
                     .await?;
+
+                // Messages returned by the API don't have a guild id.
+                message.guild_id = guild_id;
 
                 self.put_message(&message);
 
