@@ -82,8 +82,14 @@ async fn main() -> Result<()> {
 
     let token = get_optional_env("DISCORD_TOKEN").context("missing discord bot token")?;
 
+    let mut http = HttpClient::builder().token(token.clone());
+
+    if let Some(proxy) = get_optional_env("DISCORD_PROXY") {
+        http = http.proxy(proxy, true);
+    }
+
     // HTTP is separate from the gateway, so create a new client.
-    let http = Arc::new(HttpClient::new(token.clone()));
+    let http = Arc::new(http.build());
 
     // Just block on these, it simplifies the startup logic.
     let user = Arc::new(http.current_user().await?.model().await?);
