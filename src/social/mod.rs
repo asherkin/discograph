@@ -1,19 +1,16 @@
 pub mod graph;
 pub mod inference;
 
-use anyhow::{anyhow, Result};
-use futures::future::join_all;
+use anyhow::Result;
 use std::collections::HashSet;
 use tracing::{error, info};
 use twilight_model::channel::message::{MessageReference, MessageType};
 use twilight_model::channel::ChannelType;
 use twilight_model::gateway::event::Event;
-use twilight_model::id::marker::UserMarker;
-use twilight_model::id::Id;
 
-use crate::cache::CachedMember;
 use crate::context::Context;
 use crate::social::inference::{Interaction, RelationshipChange};
+use crate::stats;
 
 pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
     match event {
@@ -170,86 +167,14 @@ pub async fn store_interaction(
     }
 
     // Ensure the DB contains the details of who was involved in this interaction.
-    let (already_loaded, not_found) = context
-        .cache
-        .bulk_preload_members(&context.shard, interaction.guild, user_ids.iter().cloned())
-        .await
-        .unwrap();
-
-    // Users not already in the cache will have been saved by the gateway event handler.
-    let already_loaded = already_loaded.into_iter().map(|user_id| {
-        let cache = context.cache.clone();
-
-        async move {
-            let member = cache.get_member(interaction.guild, user_id).await;
-            let user = cache.get_user(user_id).await;
-            (user, member.map(|member| (user_id, member)))
-        }
-    });
-
-    // Not found users are no longer members (or are webhooks), but we still need their user info.
-    // For webhooks this'll pull their latest profile info from the cache, which is the best we can do.
-    // Like before, the gateway event handler will have added their departed member records.
-    let not_found = not_found.into_iter().map(|user_id| {
-        let cache = context.cache.clone();
-
-        async move {
-            let user = cache.get_user(user_id).await;
-            (
-                user,
-                Result::<(Id<UserMarker>, CachedMember), _>::Err(anyhow!("departed member")),
-            )
-        }
-    });
-
-    let (users, members): (Vec<_>, Vec<_>) = join_all(already_loaded)
-        .await
-        .into_iter()
-        .chain(join_all(not_found).await.into_iter())
-        .unzip();
-
-    let users: Vec<_> = users.into_iter().flatten().collect();
-    if !users.is_empty() {
-        let mut values = "(?, ?, ?, ?, ?, ?), ".repeat(users.len());
-        values.truncate(values.len() - 2);
-
-        let sql = format!("INSERT INTO users (id, name, discriminator, bot, avatar, animated) VALUES {} ON DUPLICATE KEY UPDATE name = VALUE(name), discriminator = VALUE(discriminator), bot = VALUE(bot), avatar = VALUE(avatar), animated = VALUE(animated)", values);
-
-        let mut query = sqlx::query(&sql);
-        for user in &users {
-            let avatar = &user.avatar;
-            query = query
-                .bind(user.id.get())
-                .bind(&user.name)
-                .bind(user.discriminator)
-                .bind(user.bot)
-                .bind(avatar.map(|image| image.bytes().as_slice().to_owned()))
-                .bind(avatar.map_or(false, |image| image.is_animated()));
-        }
-
-        query.execute(pool).await?;
-    }
-
-    let members: Vec<_> = members.into_iter().flatten().collect();
-    if !members.is_empty() {
-        let mut values = "(?, ?, ?, ?, ?), ".repeat(members.len());
-        values.truncate(values.len() - 2);
-
-        let sql = format!("INSERT INTO members (guild, user, nickname, avatar, animated) VALUES {} ON DUPLICATE KEY UPDATE nickname = VALUE(nickname), avatar = VALUE(avatar), animated = VALUE(animated)", values);
-
-        let mut query = sqlx::query(&sql);
-        for (user_id, member) in &members {
-            let avatar = &member.avatar;
-            query = query
-                .bind(interaction.guild.get())
-                .bind(user_id.get())
-                .bind(&member.nick)
-                .bind(avatar.map(|image| image.bytes().as_slice().to_owned()))
-                .bind(avatar.map_or(false, |image| image.is_animated()));
-        }
-
-        query.execute(pool).await?;
-    }
+    stats::ensure_users_saved_in_db(
+        context.cache.clone(),
+        pool,
+        &context.shard,
+        interaction.guild,
+        user_ids.into_iter(),
+    )
+    .await?;
 
     // Once the related records are in, actually insert the event.
     query.execute(pool).await?;

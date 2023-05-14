@@ -306,6 +306,7 @@ dependencies = [
  "ctrlc",
  "dbl-rs",
  "futures",
+ "hyper",
  "lru",
  "parking_lot 0.12.1",
  "rand",

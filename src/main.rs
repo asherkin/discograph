@@ -8,10 +8,10 @@ use anyhow::{Context as AnyhowContext, Result};
 use futures::StreamExt;
 use parking_lot::Mutex;
 use sqlx::mysql::MySqlPoolOptions;
-use sqlx::Connection;
+use sqlx::{Connection, MySqlPool};
 use tracing::{debug, error, info, warn};
 use twilight_gateway::stream::ShardEventStream;
-use twilight_gateway::{stream, Config, Event};
+use twilight_gateway::{stream, Config, Event, MessageSender};
 use twilight_http::{Client as HttpClient, Client};
 use twilight_model::application::command::{
     Command, CommandOption, CommandOptionChoice, CommandOptionChoiceValue, CommandOptionType,
@@ -144,12 +144,126 @@ async fn main() -> Result<()> {
     // let mut shards: Vec<_> =
     //     stream::create_range(0..3, 3, config, |_, config| config.build()).collect();
 
-    let shard_senders: Vec<_> = shards.iter().map(|shard| shard.sender()).collect();
+    let total_shards = shards.len() as u64;
+    let shard_senders: HashMap<_, _> = shards
+        .iter()
+        .map(|shard| (shard.id().number(), shard.sender()))
+        .collect();
+
+    if let Some(port) = get_optional_env("DISCOGRAPH_API_PORT") {
+        if let Ok(port) = port.parse::<u16>() {
+            use hyper::body;
+            use hyper::service::{make_service_fn, service_fn};
+            use hyper::{Body, Request, Response, Server};
+
+            async fn handle_request(
+                request: Request<Body>,
+                cache: Arc<Cache>,
+                pool: Option<MySqlPool>,
+                senders: HashMap<u64, MessageSender>,
+                total_shards: u64,
+            ) -> Result<Response<Body>> {
+                if request.uri().path() != "/api/members" {
+                    anyhow::bail!("unknown api call");
+                }
+
+                let pool = pool.context("database not configured")?;
+
+                let body = body::to_bytes(request).await?;
+                let body = String::from_utf8(body.into())?;
+
+                info!(?body);
+
+                let mut lines = body.split_terminator('\n');
+
+                let guild_id: Id<GuildMarker> = lines
+                    .next()
+                    .ok_or(anyhow::anyhow!("missing guild id"))
+                    .and_then(|str| str.parse().context("failed to parse guild id"))?;
+
+                let user_ids: Result<Vec<Id<UserMarker>>> = lines
+                    .map(|str| str.parse().context("failed to parse user id"))
+                    .collect();
+
+                let user_ids = user_ids?;
+
+                info!(?guild_id, ?user_ids);
+
+                let shard_index = (guild_id.get() >> 22) % total_shards;
+                let sender = senders
+                    .get(&shard_index)
+                    .context("no shard found for guild id")?;
+
+                stats::ensure_users_saved_in_db(
+                    cache,
+                    &pool,
+                    sender,
+                    guild_id,
+                    user_ids.into_iter(),
+                )
+                .await
+                .context("failed to request users")?;
+
+                Ok(Response::new(Body::empty()))
+            }
+
+            async fn request_wrapper(
+                request: Request<Body>,
+                cache: Arc<Cache>,
+                pool: Option<MySqlPool>,
+                senders: HashMap<u64, MessageSender>,
+                total_shards: u64,
+            ) -> Result<Response<Body>> {
+                info!(?request);
+
+                match handle_request(request, cache, pool, senders, total_shards).await {
+                    Ok(response) => {
+                        info!(?response);
+                        Ok(response)
+                    }
+                    Err(error) => {
+                        let error = error.to_string();
+                        info!(%error);
+                        Ok(Response::builder().status(500).body(error.into())?)
+                    }
+                }
+            }
+
+            let cache = cache.clone();
+            let pool = pool.clone();
+            let shard_senders = shard_senders.clone();
+
+            let service = make_service_fn(move |_conn| {
+                let cache = cache.clone();
+                let pool = pool.clone();
+                let shard_senders = shard_senders.clone();
+
+                async move {
+                    anyhow::Ok(service_fn(move |request| {
+                        request_wrapper(
+                            request,
+                            cache.clone(),
+                            pool.clone(),
+                            shard_senders.clone(),
+                            total_shards,
+                        )
+                    }))
+                }
+            });
+
+            let addr = ([127, 0, 0, 1], port).into();
+            let server = Server::bind(&addr).serve(service);
+
+            tokio::spawn(server);
+        } else {
+            warn!("DISCOGRAPH_API_PORT could not be parsed");
+        }
+    }
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let shutdown_clone = shutdown.clone();
-    let shutdown_senders = shard_senders.clone();
+    let shutdown_senders: Vec<_> = shard_senders.values().cloned().collect();
 
     ctrlc::set_handler(move || {
         info!("ctrlc handler called");
