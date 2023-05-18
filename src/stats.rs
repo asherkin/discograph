@@ -54,6 +54,8 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
             // If someone had joined, left, then joined again while we were offline, we leave them
             // marked as departed to avoid making invalid requests to Discord. We'll pick them up
             // when they next interact.
+            // TODO: Be much less aggressive about this - possibly add a last updated date to members
+            //       and then periodically refresh them to catch any we missed leaving.
             sqlx::query("DELETE FROM members WHERE guild = ? AND departed = 0")
                 .bind(guild.id.get())
                 .execute(pool)

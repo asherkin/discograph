@@ -586,8 +586,17 @@ async fn command_graph(
         png
     };
 
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
     Ok(CommandResponse {
-        content: None,
+        content: Some(format!(
+            "<https://discograph.gg/server/{}/{}>",
+            guild_id.get(),
+            timestamp - (timestamp % 60)
+        )),
         attachments: vec![Attachment::from_bytes(
             attachment_base_name + ".png",
             png,
