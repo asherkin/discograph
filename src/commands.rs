@@ -34,7 +34,7 @@ use twilight_model::id::Id;
 use twilight_model::user::User;
 
 use crate::context::Context;
-use crate::social::graph::ColorScheme;
+use crate::social::graph::{ColorScheme, ToDotError};
 use crate::stats;
 
 struct CommandContext {
@@ -437,8 +437,7 @@ async fn add_command_response_to_message_and_send<'a>(
 async fn command_help(context: &Context) -> Result<CommandResponse> {
     let description = format!(
         "I'm a Discord Bot that infers relationships between users and draws pretty graphs.\n\
-        I'll only respond to messages that directly mention me, like `@{} help`,\n\
-        or you can use my slash commands.",
+        I'll only respond to messages that directly mention me, like `@{} help`, or you can use my slash commands.",
         context.user.name,
     );
 
@@ -466,11 +465,23 @@ async fn command_help(context: &Context) -> Result<CommandResponse> {
         ),
     };
 
+    let links_fields = EmbedField {
+        inline: false,
+        name: "".to_string(),
+        value: [
+            "[Website](https://discograph.gg/)",
+            "[Support Server](https://discord.gg/6y3hfbD)",
+            "[Top.gg](https://top.gg/bot/735929260073549854)",
+            "[GitHub](https://github.com/asherkin/discograph)",
+        ]
+        .join("\u{3000}\u{00b7}\u{3000}"),
+    };
+
     let embed = Embed {
         author: None,
         color: None,
-        description: Some(description),
-        fields: vec![commands_field, invite_field],
+        description: None,
+        fields: vec![commands_field, invite_field, links_fields],
         footer: None,
         image: None,
         kind: "rich".to_string(),
@@ -483,7 +494,7 @@ async fn command_help(context: &Context) -> Result<CommandResponse> {
     };
 
     Ok(CommandResponse {
-        content: None,
+        content: Some(description),
         attachments: vec![],
         embeds: vec![embed],
     })
@@ -567,7 +578,7 @@ async fn command_graph(
             .context("no graph for guild")?
     };
 
-    let dot = graph
+    let dot_result = graph
         .to_dot(
             context,
             guild_id,
@@ -576,7 +587,31 @@ async fn command_graph(
             transparent,
             &context.font_name,
         )
-        .await?;
+        .await;
+
+    let dot = match dot_result {
+        Ok(dot) => dot,
+        Err(error) => {
+            return match error.downcast_ref::<ToDotError>() {
+                Some(ToDotError::NoUsers) => Ok(CommandResponse {
+                    content: Some(
+                        "Hi there, welcome to DiscoGraph!\n\n\
+                        I don't have enough data to display a graph for this server yet, please try again in a couple of days.".into()),
+                    attachments: vec![],
+                    embeds: vec![],
+                }),
+                Some(ToDotError::NotEnoughUsers) => Ok(CommandResponse {
+                    content: Some(format!(
+                        "Hi there, welcome to DiscoGraph!\n\n\
+                        I'm still learning about the conversations that happen in this server, please try again in a couple more days.\n\
+                        If you want to see what I've got so far anyway, please check out <https://discograph.gg/server/{}>.", guild_id.get())),
+                    attachments: vec![],
+                    embeds: vec![],
+                }),
+                None => Err(error.context("Internal error while creating graph, please try again later")),
+            }
+        }
+    };
 
     let png = render_dot(&dot).await?;
 

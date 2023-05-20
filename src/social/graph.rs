@@ -10,6 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{ErrorKind as IoErrorKind, Read, Write};
 use std::num::ParseIntError;
@@ -65,6 +66,25 @@ pub enum ColorScheme {
 pub struct UserRelationshipGraphMap(
     HashMap<(Id<UserMarker>, Id<UserMarker>), RelationshipStrength>,
 );
+
+#[derive(Debug)]
+pub enum ToDotError {
+    NoUsers,
+    NotEnoughUsers,
+}
+
+impl Display for ToDotError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoUsers => f.write_str("There was not enough data to display a graph"),
+            Self::NotEnoughUsers => {
+                f.write_str("There was not enough data to display a good quality graph")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ToDotError {}
 
 impl UserRelationshipGraphMap {
     fn new() -> Self {
@@ -270,7 +290,11 @@ impl UserRelationshipGraphMap {
         });
 
         if user_weights.is_empty() {
-            anyhow::bail!("Not enough users to create a graph");
+            return Err(anyhow::Error::new(ToDotError::NoUsers));
+        }
+
+        if user_weights.len() < 5 {
+            return Err(anyhow::Error::new(ToDotError::NotEnoughUsers));
         }
 
         const BG_LIGHT: u32 = 0xFFFFFFFF;
