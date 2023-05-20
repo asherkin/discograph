@@ -3,7 +3,7 @@ use futures::future::join_all;
 use sqlx::{MySqlPool, Row};
 use twilight_gateway::MessageSender;
 use twilight_model::gateway::event::Event;
-use twilight_model::guild::Member;
+use twilight_model::guild::{GuildFeature, Member};
 use twilight_model::id::marker::{GuildMarker, UserMarker};
 use twilight_model::id::Id;
 
@@ -44,8 +44,17 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                 .joined_at
                 .map_or(timestamp, |d| (d.as_micros() / 1000) as u64);
 
-            sqlx::query("INSERT INTO guilds (id, joined, online) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE joined = IF(joined < VALUE(joined), joined, VALUE(joined)), departed = NULL, online = 1")
+            let mut flags = 0;
+            if guild.features.contains(&GuildFeature::Discoverable) {
+                flags |= 1;
+            }
+
+            sqlx::query("INSERT INTO guilds (id, name, icon, animated, flags, joined, online) VALUES (?, ?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE name = VALUE(name), icon = VALUE(icon), animated = VALUE(animated), flags = VALUE(flags), joined = IF(joined < VALUE(joined), joined, VALUE(joined)), departed = NULL, online = 1")
                 .bind(guild.id.get())
+                .bind(&guild.name)
+                .bind(guild.icon.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(guild.icon.map_or(false, |image| image.is_animated()))
+                .bind(flags)
                 .bind(joined_at)
                 .execute(pool)
                 .await?;
@@ -89,6 +98,22 @@ pub async fn handle_event(context: &Context, event: &Event) -> Result<()> {
                     .await
                     .unwrap();
             });
+        }
+        Event::GuildUpdate(guild) => {
+            let mut flags = 0;
+            if guild.features.contains(&GuildFeature::Discoverable) {
+                flags |= 1;
+            }
+
+            sqlx::query("INSERT INTO guilds (id, name, icon, animated, flags, joined, online) VALUES (?, ?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE name = VALUE(name), icon = VALUE(icon), animated = VALUE(animated), flags = VALUE(flags), departed = NULL, online = 1")
+                .bind(guild.id.get())
+                .bind(&guild.name)
+                .bind(guild.icon.map(|image| image.bytes().as_slice().to_owned()))
+                .bind(guild.icon.map_or(false, |image| image.is_animated()))
+                .bind(flags)
+                .bind(timestamp)
+                .execute(pool)
+                .await?;
         }
         Event::GuildDelete(guild) => {
             if guild.unavailable {
